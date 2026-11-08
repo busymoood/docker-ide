@@ -1,0 +1,14 @@
+{
+  "name": "devbox",
+  "image": "ghcr.io/busymoood/dotfiles-docker:latest",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "workspaceFolder": "/workspace",
+  "containerEnv": {
+    "DOTFILES_REPO": "${localEnv:DOTFILES_REPO}",
+    "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock"
+  },
+  "mounts": [
+    "source=devbox-home,target=/home/dev/.local,type=volume"
+  ],
+  "postStartCommand": "devbox-agent-relay start; onstart --no-shell"
+}

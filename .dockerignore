@@ -1,0 +1,8 @@
+# Fichiers non nécessaires au build de l'image
+README.md
+AGENTS.md
+LICENSE
+.github/
+bin/
+.git/
+.gitignore
