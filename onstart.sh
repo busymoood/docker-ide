@@ -188,6 +188,19 @@ if [[ -d "${DOTFILES_DIR}/nvim" ]]; then
   fi
 fi
 
+# LazyGit : layout dotfiles/lazygit/config.yml (éditeur nvim par défaut)
+if [[ -f "${DOTFILES_DIR}/lazygit/config.yml" ]]; then
+  mkdir -p "${HOME}/.config/lazygit"
+  ln -sf "${DOTFILES_DIR}/lazygit/config.yml" "${HOME}/.config/lazygit/config.yml"
+  log "Config LazyGit liée"
+fi
+
+# Git : nvim comme éditeur des messages de commit (si non déjà défini)
+if [[ "$(git config --global core.editor || true)" != "nvim" ]]; then
+  git config --global core.editor nvim
+  log "git core.editor = nvim"
+fi
+
 # SSH : config + clés publiques uniquement (jamais de clé privée)
 if [[ -d "${DOTFILES_DIR}/ssh" ]]; then
   mkdir -p "${HOME}/.ssh"

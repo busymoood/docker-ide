@@ -7,6 +7,9 @@ FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Éditeur par défaut : nvim (consulté par lazygit, git, opencode…)
+ENV EDITOR=nvim VISUAL=nvim
+
 USER root
 
 # --- Utilisateur « dev » -----------------------------------------------------
