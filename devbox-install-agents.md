@@ -202,3 +202,69 @@ Sortie de session : `docker exec -it <conteneur> zsh -l` (zsh est le shell par d
   docker exec -it <conteneur> zsh
   ```
 - Rappel de mise à jour du tooling : `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (ou `:v0.6.0` épinglé). Les configs n'ont **pas** besoin de rebuild d'image : pousser dans le repo de dotfiles ou dans le repo de config NeoVim + redémarrer la session suffit.
+
+---
+
+## 7. Annexe — Agent SSH détaillé
+
+Aucune clé privée ne quitte **Bitwarden sur votre machine principale**. Ce qui circule, c'est uniquement le **socket** de l'agent (`$SSH_AUTH_SOCK`). Selon le moteur Docker, deux modes :
+
+| Hôte | Mode | Mise en place |
+|---|---|---|
+| **Linux natif** — VPS, Raspberry Pi, WSL2 avec Docker natif | montage direct du socket | `-v "$SSH_AUTH_SOCK:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent` (automatique avec `bin/devbox.sh`) |
+| **Docker Desktop** — macOS, Windows/WSL2 avec intégration Docker Desktop | **relais TCP** (un socket Unix non-docker ne peut pas être monté) | hôte : `socat TCP-LISTEN:4242,bind=0.0.0.0,reuseaddr,fork UNIX-CONNECT:$HOME/.bitwarden-ssh-agent.sock` (service launchd) · conteneur : `-e SSH_AUTH_SOCK=/tmp/ssh-agent.sock -e DEVBOX_SSH_RELAY=1` |
+
+`bin/devbox.sh` choisit tout seul : il interroge `docker info` (Docker Desktop ?) et bascule en mode relais si nécessaire.
+
+**Helper `devbox-agent-relay`** (embarqué dans l'image) :
+
+```bash
+devbox-agent-relay start    # crée le socket (relais TCP) ou vérifie un montage direct
+devbox-agent-relay doctor   # socket, cible, PID, clés visibles, configs
+devbox-agent-relay stop     # arrête le relais local
+```
+
+- Le relais tourne en **session détachée** (`setsid`) : il survit à la fin du `postStartCommand` (un `nohup … &` seul est tué avec la session → agent muet ensuite).
+- **Agent verrouillé** (Bitwarden fermé) : `start` prévient et arme un **rattrapage** (30 s × 10 min) qui rejoue `onstart` dès que des clés apparaissent — inutile de recréer le conteneur.
+- `onstart` attend le socket jusqu'à 5 s, puis vérifie l'agent **avant** les clonages : sans agent, les repos `git@…` (dotfiles privés, config NeoVim) sont sautés pour ce démarrage.
+
+**Chaînes de forwarding :**
+
+| Scénario | Chaîne |
+|---|---|
+| macOS + Docker Desktop | Bitwarden → `~/.bitwarden-ssh-agent.sock` → socat TCP `4242` (launchd) → relais conteneur → `/tmp/ssh-agent.sock` |
+| macOS + moteur Docker natif (Colima, Docker via VM Linux) | Bitwarden → `~/.bitwarden-ssh-agent.sock` → montage direct `/ssh-agent` |
+| WSL2 + Docker natif | Bitwarden (Windows) → pipe `openssh-ssh-agent` → npiperelay+socat → `~/.ssh/agent.sock` → montage `/ssh-agent` |
+| WSL2 + Docker Desktop | idem jusqu'à `~/.ssh/agent.sock` → socat TCP `4242` → relais conteneur |
+| Raspberry / VPS (Docker natif) | Bitwarden (Mac) → `ssh -A` → socket sshd sur l'hôte → montage `/ssh-agent` |
+
+> Le conteneur ne peut **que demander des signatures** à l'agent — il ne lit jamais de clé privée.
+>
+> Le relais launchd écoute sur `0.0.0.0:4242` (`host.docker.internal` n'atteint pas la loopback) : sur un réseau non fiable, restreindre le port au sous-réseau Docker Desktop avec une règle `pf`.
+
+**Diagnostic rapide**
+
+```bash
+# hôte (Docker Desktop) : le relais tourne-t-il ?
+lsof -iTCP:4242 -sTCP:LISTEN
+ssh-add -l                                  # les clés doivent apparaître ici d'abord
+
+# conteneur : état complet (relais, socket, clés, configs)
+devbox-agent-relay doctor
+# après déverrouillage de Bitwarden :
+devbox-agent-relay start
+```
+
+**Symptômes typiques :**
+
+| Symptôme | Cause | Action |
+|---|---|---|
+| `ssh-add -l` → `No such file or directory` (conteneur) | relais mort (ancien `nohup` tué avec la session) | `devbox-agent-relay start` |
+| `ssh-add -l` → `communication with agent failed` | agent hôte muet (Bitwarden verrouillé) | déverrouiller Bitwarden, `ssh-add -l` sur l'hôte, puis `devbox-agent-relay start` |
+| `nvim` nu après un `devcontainer up` | `postStartCommand` non rejoué sur un conteneur existant | `devcontainer up --remove-existing-container` (volume conservé) ou `devbox-agent-relay start; onstart --no-shell` |
+
+**Variante dev container — Docker natif** (défaut du README = Docker Desktop) : dans `.devcontainer/devcontainer.json`, remplacer `"SSH_AUTH_SOCK": "${localEnv:DEVBOX_SSH_AUTH_SOCK:/tmp/ssh-agent.sock}"` par `"SSH_AUTH_SOCK": "/ssh-agent"` et décommenter dans `mounts` :
+
+```jsonc
+"source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind"
+```
