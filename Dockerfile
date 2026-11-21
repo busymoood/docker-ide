@@ -1,22 +1,22 @@
-# devbox — Environnement de développement portable (terminal-first)
-# Multi-arch : linux/amd64 + linux/arm64
-# Ubuntu 24.04 (glibc 2.39) : requis par les parsers Treesitter précompilés
-# de nvim-treesitter (branche main) — sur 22.04 (glibc 2.35) ils échouent avec
-# « version `GLIBC_2.39' not found ».
+# devbox — Portable development environment (terminal-first)
+# Multi-arch: linux/amd64 + linux/arm64
+# Ubuntu 24.04 (glibc 2.39) is required by the prebuilt Treesitter parsers of
+# nvim-treesitter (main branch) — on 22.04 (glibc 2.35) they fail with
+# "version `GLIBC_2.39' not found".
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Éditeur par défaut : nvim (consulté par lazygit, git, opencode…)
+# Default editor: nvim (used by lazygit, git, opencode…)
 ENV EDITOR=nvim VISUAL=nvim
 
 USER root
 
-# --- Utilisateur « dev » -----------------------------------------------------
-# L'image de base fournit un compte `vscode` (UID 1000). On le renomme en `dev`
-# (nom de l'environnement, indépendant de tout éditeur) : home /home/dev,
-# groupe dev, sudoers renommé, metadata devcontainer mise à jour pour que
-# `remoteUser` vaille `dev` par défaut.
+# --- "dev" user --------------------------------------------------------------
+# The base image provides a `vscode` account (UID 1000). Rename it to `dev`
+# (environment name, independent of any editor): home /home/dev, dev group,
+# renamed sudoers entry, updated devcontainer metadata so `remoteUser`
+# defaults to `dev`.
 RUN set -eux; \
     usermod -l dev -d /home/dev -m vscode; \
     groupmod -n dev vscode; \
@@ -27,7 +27,7 @@ RUN set -eux; \
     chown -R dev:dev /home/dev
 LABEL devcontainer.metadata='[{"remoteUser":"dev"}]'
 
-# --- Outils système de base -------------------------------------------------
+# --- Base system tools -------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
@@ -40,22 +40,77 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     openssh-client \
     socat \
+    iproute2 \
     ca-certificates \
     jq \
   && rm -rf /var/lib/apt/lists/* \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
-# --- NeoVim (dernière version stable, binaire officiel multi-arch) ----------
-# Assets : nvim-linux-x86_64.tar.gz / nvim-linux-arm64.tar.gz
-# NB : on télécharge via l'API GitHub (assets/<id> + Accept: octet-stream)
-# plutôt que via releases/latest/download — les redirections github.com
-# renvoient des 504 intermittents (buildx CI, Docker Desktop proxy).
+# --- Oh My Zsh plugins -------------------------------------------------------
+# The base image already ships Oh My Zsh in ~/.oh-my-zsh; the baked zshrc
+# enables these two plugins, which are absent from the base image.
+RUN set -eux; \
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true; \
+    OMZ=/home/dev/.oh-my-zsh; \
+    test -f "$OMZ/oh-my-zsh.sh"; \
+    for plugin in zsh-autosuggestions zsh-syntax-highlighting; do \
+      dest="$OMZ/custom/plugins/${plugin}"; \
+      rm -rf "$dest"; \
+      for i in 1 2 3; do \
+        git clone --depth=1 "https://github.com/zsh-users/${plugin}.git" "$dest" && break; \
+        rm -rf "$dest"; sleep 5; \
+      done; \
+      test -d "$dest"; \
+    done; \
+    chown -R dev:dev "$OMZ/custom"
+
+# --- TPM (tmux plugins: tpm + tmux-resurrect) --------------------------------
+# The baked tmux.conf ends with `run '~/.tmux/plugins/tpm/tpm'`.
+RUN set -eux; \
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true; \
+    TPM=/home/dev/.tmux/plugins/tpm; \
+    RESURRECT=/home/dev/.tmux/plugins/tmux-resurrect; \
+    for i in 1 2 3; do \
+      git clone --depth=1 https://github.com/tmux-plugins/tpm.git "$TPM" && break; \
+      rm -rf "$TPM"; sleep 5; \
+    done; \
+    test -f "$TPM/tpm"; \
+    for i in 1 2 3; do \
+      git clone --depth=1 https://github.com/tmux-plugins/tmux-resurrect.git "$RESURRECT" && break; \
+      rm -rf "$RESURRECT"; sleep 5; \
+    done; \
+    test -f "$RESURRECT/resurrect.tmux"; \
+    chown -R dev:dev /home/dev/.tmux
+
+# --- User configs baked into the image --------------------------------------
+# The content is versioned in this repository (zshrc/, neovim/): no network
+# clone at container startup. /opt/devbox-config stays in the image layer and
+# is not overwritten by the ~/.local volume; the symlinks live in $HOME.
+COPY zshrc/zshrc      /opt/devbox-config/zshrc
+COPY zshrc/tmux.conf  /opt/devbox-config/tmux.conf
+COPY neovim/          /opt/devbox-config/nvim/
+
+RUN set -eux; \
+    # These files are also used on macOS: patch the IMAGE COPY, not the source.
+    sed -i 's|^export SSH_AUTH_SOCK=.*|# SSH_AUTH_SOCK provided by devbox (agent relay) - do not override|' /opt/devbox-config/zshrc; \
+    sed -i 's|^source .*oh-my-zsh.sh|zstyle ":omz:update" mode disabled\n&|' /opt/devbox-config/zshrc; \
+    ln -sf /opt/devbox-config/zshrc     /home/dev/.zshrc; \
+    ln -sf /opt/devbox-config/tmux.conf /home/dev/.tmux.conf; \
+    mkdir -p /home/dev/.config; \
+    ln -sfn /opt/devbox-config/nvim      /home/dev/.config/nvim; \
+    chown -R dev:dev /opt/devbox-config
+
+# --- NeoVim (latest stable, official multi-arch binary) ---------------------
+# Assets: nvim-linux-x86_64.tar.gz / nvim-linux-arm64.tar.gz
+# NB: download via the GitHub API (assets/<id> + Accept: octet-stream) rather
+# than releases/latest/download — github.com redirects return intermittent
+# 504s (buildx CI, Docker Desktop proxy).
 RUN set -eux; \
     unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true; \
     case "$(dpkg --print-architecture)" in \
       amd64)  NVIM_ARCH="x86_64" ;; \
       arm64)  NVIM_ARCH="arm64"  ;; \
-      *) echo "arch non supportée" >&2; exit 1 ;; \
+      *) echo "unsupported architecture" >&2; exit 1 ;; \
     esac; \
     NVIM_ASSET="nvim-linux-${NVIM_ARCH}.tar.gz"; \
     NVIM_URL="$(curl -fsSL --retry 10 --retry-delay 5 --retry-all-errors \
@@ -69,8 +124,8 @@ RUN set -eux; \
     ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim; \
     rm /tmp/nvim.tar.gz
 
-# --- LazyGit (dernière version stable, binaire officiel multi-arch) ---------
-# Même remarque que nvim : download via l'API GitHub, pas via releases/latest.
+# --- LazyGit (latest stable, official multi-arch binary) --------------------
+# Same remark as nvim: download via the GitHub API, not releases/latest.
 RUN set -eux; \
     unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true; \
     LG_META="$(curl -fsSL --retry 10 --retry-delay 5 --retry-all-errors \
@@ -90,10 +145,10 @@ RUN set -eux; \
     install /tmp/lazygit /usr/local/bin/lazygit; \
     rm /tmp/lazygit /tmp/lazygit.tar.gz
 
-# --- Dictionnaires spell (FR) ------------------------------------------------
-# NeoVim n'embarque que l'anglais (en.utf-8.spl). Sans fr.utf-8.spl, un
-# `spelllang=fr` déclenche un prompt « Download spell file? » au démarrage.
-# Vim publie les dictionnaires sur son miroir officiel (pas sur GitHub).
+# --- French spell dictionaries -----------------------------------------------
+# NeoVim only ships English (en.utf-8.spl). Without fr.utf-8.spl, setting
+# `spelllang=fr` triggers a "Download spell file?" prompt at startup.
+# Vim publishes dictionaries on its official mirror (not on GitHub).
 RUN set -eux; \
     SPELL_DIR=/opt/nvim/share/nvim/runtime/spell; \
     mkdir -p "$SPELL_DIR"; \
@@ -104,17 +159,17 @@ RUN set -eux; \
     done; \
     ls -l "$SPELL_DIR"
 
-# --- Bootstrap des dotfiles + relais agent SSH ------------------------------
+# --- Bootstrap + SSH agent relay --------------------------------------------
 COPY onstart.sh /tmp/onstart.sh
 RUN install -m 0755 /tmp/onstart.sh /usr/local/bin/onstart && rm /tmp/onstart.sh
 
-# Relais agent SSH : montage direct (Docker natif) ou relais TCP (Docker
-# Desktop, où un socket Unix non-docker ne peut pas être monté).
+# SSH agent relay: direct mount (native Docker) or TCP relay (Docker Desktop,
+# where a non-Docker Unix socket cannot be mounted).
 COPY devbox-agent-relay /tmp/devbox-agent-relay
 RUN install -m 0755 /tmp/devbox-agent-relay /usr/local/bin/devbox-agent-relay \
   && rm /tmp/devbox-agent-relay
 
-# --- OpenCode V2 (installeur officiel opencode.ai) ---------------------------
+# --- OpenCode V2 (official installer from opencode.ai) ----------------------
 USER dev
 RUN set -eux; \
     unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true; \
@@ -123,14 +178,14 @@ RUN set -eux; \
     test -x "$HOME/.opencode/bin/opencode"; \
     sudo ln -sf "$HOME/.opencode/bin/opencode" /usr/local/bin/opencode
 
-# --- Session par défaut -----------------------------------------------------
-# WORKDIR inscriptible : certains plugins (supermaven-nvim) téléchargent via un
-# fichier temporaire RELATIF — avec WORKDIR=/ (défaut de l'image de base), curl
-# échoue en « write error » (exit 23) et le binaire n'est jamais récupéré.
+# --- Default session ---------------------------------------------------------
+# Writable WORKDIR: some plugins (supermaven-nvim) download via a RELATIVE
+# temporary file — with WORKDIR=/ (base image default), curl fails with a
+# "write error" (exit 23) and the binary is never fetched.
 WORKDIR /home/dev
 
-# Le bootstrap (onstart) s'exécute automatiquement avant le shell :
+# The bootstrap (onstart) runs automatically before the shell:
 #   docker run -it ghcr.io/busymoood/dotfiles-docker:latest
-# Sans terminal (ex: postStartCommand), utiliser : onstart --no-shell
+# Without a TTY (e.g. postStartCommand), use: onstart --no-shell
 ENTRYPOINT ["/usr/local/bin/onstart"]
 CMD ["zsh", "-l"]

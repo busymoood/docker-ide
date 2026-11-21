@@ -4,7 +4,6 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "containerEnv": {
-    "DOTFILES_REPO": "${localEnv:DOTFILES_REPO}",
     "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock"
   },
   "mounts": [

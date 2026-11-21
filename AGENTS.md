@@ -1,30 +1,30 @@
-# Architecture d'un Environnement de Développement Transparent & Portable
+# Architecture of a Transparent & Portable Development Environment
 
-Ce guide récapitule la méthodologie complète pour configurer un environnement de développement homogène à travers vos machines (PC fixe, portable, Raspberry Pi, VPS) en utilisant les **Dev Containers**, un **Dockerfile d'image personnalisée**, et vos **Dotfiles Git**.
-
----
-
-## 1. Vue d'ensemble de l'Architecture
-
-L'architecture repose sur la séparation stricte entre les **outils système (binaires)** et vos **configurations personnelles (dotfiles)** :
-
-*   **Image Docker (Binaires & Outils) :** Contient les dépendances lourdes (`neovim`, `lazygit`, `opencode`, `tmux`, `zsh`, `ripgrep`, etc.). Elle est construite une fois et réutilisée.
-*   **Dépôt Dotfiles (Configurations) :** Hébergé sur un dépôt Git distant. Il contient vos personnalisations (`.zshrc`, `.tmux.conf`, configs Neovim/LazyVim, `.ssh/config` sans clés privées) et un script d'installation.
-*   **SSH Agent Forwarding (Sécurité) :** Relaye dynamiquement le socket SSH de la machine hôte vers le conteneur. **Aucune clé privée SSH n'est stockée dans le conteneur ou l'image.**
+This guide summarizes the complete methodology for setting up a consistent development environment across your machines (desktop, laptop, Raspberry Pi, VPS) using **Dev Containers**, a **custom image Dockerfile**, and your **Git dotfiles**.
 
 ---
 
-## 2. L'Image Docker (`Dockerfile`)
+## 1. Architecture Overview
 
-Ce fichier définit les outils de base indispensables à votre flux de travail.
+The architecture relies on a strict separation between **system tools (binaries)** and your **personal configurations (dotfiles)**:
+
+*   **Docker image (binaries & tools):** contains the heavy dependencies (`neovim`, `lazygit`, `opencode`, `tmux`, `zsh`, `ripgrep`, etc.). It is built once and reused.
+*   **Dotfiles repository (configurations):** hosted on a remote Git repository. It holds your customizations (`.zshrc`, `.tmux.conf`, Neovim/LazyVim configs, `.ssh/config` without private keys) and an installation script.
+*   **SSH agent forwarding (security):** dynamically relays the host's SSH socket into the container. **No private SSH key is ever stored in the container or the image.**
+
+---
+
+## 2. The Docker Image (`Dockerfile`)
+
+This file defines the essential base tools for your workflow.
 
 ```dockerfile
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
-# Éviter les invites interactives pendant l'installation des paquets
+# Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Installation des outils de base et dépendances CLI
+# 1. Install base tools and CLI dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -38,33 +38,33 @@ RUN apt-get update && apt-get install -y \
     socat \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Installation de Neovim (dernière version stable/nightly)
+# 2. Install Neovim (latest stable/nightly)
 RUN curl -LO https://github.com/neovim/neovim/releases/latest/download/nvim-linux64.tar.gz \
     && tar -C /opt -xzf nvim-linux64.tar.gz \
     && ln -s /opt/nvim-linux64/bin/nvim /usr/local/bin/nvim \
     && rm nvim-linux64.tar.gz
 
-# 3. Installation de LazyGit
+# 3. Install LazyGit
 RUN LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": "v\K[^"]*') \
     && curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz" \
     && tar -xf lazygit.tar.gz lazygit \
     && install lazygit /usr/local/bin \
     && rm lazygit.tar.gz lazygit
 
-# 4. Installation d'OpenCode (ou vos CLI AI spécifiques)
-# Remplacez / ajustez selon la méthode d'installation d'OpenCode
+# 4. Install OpenCode (or your specific AI CLIs)
+# Replace / adjust according to the OpenCode installation method
 RUN curl -fsSL https://opencode.ai/install.sh | bash || true
 
-# Définir l'utilisateur par défaut fourni par les images Microsoft Dev Containers
+# Set the default user provided by Microsoft Dev Containers images
 USER dev
 WORKDIR /home/dev
 ```
 
 ---
 
-## 3. Le Script d'Installation des Dotfiles (`install.sh`)
+## 3. The Dotfiles Installation Script (`install.sh`)
 
-Placez ce script à la racine de votre dépôt **Git de dotfiles**. Il s'exécutera automatiquement à chaque création d'un conteneur pour créer les liens symboliques et configurer les permissions.
+Place this script at the root of your **dotfiles Git repository**. It runs automatically on every container creation to create symlinks and set permissions.
 
 ```bash
 #!/usr/bin/env bash
@@ -72,74 +72,74 @@ set -e
 
 DOTFILES_DIR="$HOME/dotfiles"
 
-echo "=== Début de la configuration de l'environnement ==="
+echo "=== Starting environment setup ==="
 
-# 1. Préparation des dossiers
+# 1. Prepare directories
 mkdir -p "$HOME/.config"
 
-# 2. Liaison symbolique pour ZSH
+# 2. Symlink for Zsh
 if [ -f "$DOTFILES_DIR/zsh/.zshrc" ]; then
     ln -sf "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
-    echo "[✓] Config Zsh liée"
+    echo "[✓] Zsh config linked"
 fi
 
-# 3. Liaison symbolique pour Tmux
+# 3. Symlink for Tmux
 if [ -f "$DOTFILES_DIR/tmux/.tmux.conf" ]; then
     ln -sf "$DOTFILES_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
-    echo "[✓] Config Tmux liée"
+    echo "[✓] Tmux config linked"
 fi
 
-# 4. Liaison symbolique pour Neovim / LazyVim
+# 4. Symlink for Neovim / LazyVim
 if [ -d "$DOTFILES_DIR/nvim" ]; then
     ln -sf "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
-    echo "[✓] Config LazyVim liée"
+    echo "[✓] LazyVim config linked"
 fi
 
-# 5. Configuration du dossier .ssh (Uniquement config et clés publiques)
+# 5. Configure the .ssh directory (config and public keys only)
 if [ -d "$DOTFILES_DIR/ssh" ]; then
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
     
-    # Copier le fichier config et les clés publiques (.pub)
+    # Copy the config file and public keys (.pub)
     cp -r "$DOTFILES_DIR/ssh/"* "$HOME/.ssh/" 2>/dev/null || true
     
-    # Ajustement obligatoire des permissions strictes requises par SSH
+    # Enforce the strict permissions required by SSH
     chmod 644 "$HOME/.ssh/"*.pub 2>/dev/null || true
     chmod 600 "$HOME/.ssh/config" 2>/dev/null || true
-    echo "[✓] Config SSH installée et sécurisée"
+    echo "[✓] SSH config installed and secured"
 fi
 
-# 6. Définir ZSH comme shell par défaut (si nécessaire)
+# 6. Set Zsh as the default shell (if needed)
 if [ "$SHELL" != "$(which zsh)" ]; then
     sudo chsh -s $(which zsh) $(whoami) 2>/dev/null || true
 fi
 
-echo "=== Environnement configuré avec succès ! ==="
+echo "=== Environment configured successfully! ==="
 ```
 
 ---
 
-## 4. Configuration du Dev Container (`devcontainer.json`)
+## 4. Dev Container Configuration (`devcontainer.json`)
 
-Dans vos projets (ou dans votre configuration globale VS Code), utilisez le fichier `devcontainer.json` ci-dessous. Il relie l'image Docker, l'automatisation du dépôt de dotfiles et le forwarding de l'agent SSH.
+In your projects (or in your global VS Code configuration), use the `devcontainer.json` below. It connects the Docker image, the dotfiles repository automation, and SSH agent forwarding.
 
 ```json
 {
-  "name": "Mon Environnement de Dev Harmonisé",
+  "name": "My Harmonized Dev Environment",
   
-  // Utiliser l'image personnalisée (ou pointer vers un Dockerfile local)
+  // Use the custom image (or point to a local Dockerfile)
   "build": {
     "dockerfile": "Dockerfile"
   },
 
-  // 1. Déclarer le dépôt de dotfiles à cloner et le script à exécuter
+  // 1. Declare the dotfiles repository to clone and the script to run
   "dotfiles": {
-    "repository": "https://github.com/votre-utilisateur/vos-dotfiles.git",
+    "repository": "https://github.com/your-user/your-dotfiles.git",
     "targetPath": "~/dotfiles",
     "installCommand": "./install.sh"
   },
 
-  // 2. Transmettre le socket de l'agent SSH de l'hôte vers le conteneur
+  // 2. Forward the host's SSH agent socket into the container
   "remoteEnv": {
     "SSH_AUTH_SOCK": "${localEnv:SSH_AUTH_SOCK}"
   },
@@ -147,7 +147,7 @@ Dans vos projets (ou dans votre configuration globale VS Code), utilisez le fich
     "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind"
   ],
 
-  // 3. Personnalisations de l'éditeur VS Code (facultatif)
+  // 3. VS Code editor customizations (optional)
   "customizations": {
     "vscode": {
       "settings": {
@@ -160,16 +160,16 @@ Dans vos projets (ou dans votre configuration globale VS Code), utilisez le fich
     }
   },
 
-  // L'image expose déjà `remoteUser: dev` (metadata) — inutile de le répéter
+  // The image already exposes `remoteUser: dev` (metadata) — no need to repeat it
 }
 ```
 
 ---
 
-## 5. Fonctionnement global & Avantages
+## 5. Overall Workflow & Benefits
 
-1. **Au lancement du projet :** VS Code démarre le conteneur basé sur votre `Dockerfile`.
-2. **Récupération des configs :** VS Code clone automatiquement `vos-dotfiles.git` dans `~/dotfiles` à l'intérieur du conteneur.
-3. **Exécution du script :** Le fichier `./install.sh` est déclenché. Vos fichiers `.zshrc`, `.tmux.conf`, LazyVim et `.ssh/config` s'installent en une fraction de seconde.
-4. **Authentification SSH transparente :** Le tuyau `SSH_AUTH_SOCK` connecte vos commandes Git (`git push`/`git pull`) directement à votre gestionnaire de clés local (Bitwarden, 1Password, `ssh-agent` natif), sans exposer vos clés privées.
-5. **Maintenance simplifiée :** Une modification sur votre Zsh ou LazyVim ? Vous poussez sur votre repo de dotfiles, et vos autres conteneurs récupèrent les mises à jour instantanément sans jamais reconstruire l'image Docker.
+1. **On project launch:** VS Code starts the container from your `Dockerfile`.
+2. **Config retrieval:** VS Code automatically clones `your-dotfiles.git` into `~/dotfiles` inside the container.
+3. **Script execution:** `./install.sh` runs. Your `.zshrc`, `.tmux.conf`, LazyVim and `.ssh/config` are installed in a fraction of a second.
+4. **Transparent SSH authentication:** the `SSH_AUTH_SOCK` pipe connects your Git commands (`git push`/`git pull`) directly to your local key manager (Bitwarden, 1Password, native `ssh-agent`), without exposing your private keys.
+5. **Simplified maintenance:** changed your Zsh or LazyVim? Push to your dotfiles repo and your other containers pick up the updates instantly without ever rebuilding the Docker image.

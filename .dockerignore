@@ -1,4 +1,4 @@
-# Fichiers non nécessaires au build de l'image
+# Files not needed for the image build
 README.md
 AGENTS.md
 LICENSE
@@ -6,3 +6,8 @@ LICENSE
 bin/
 .git/
 .gitignore
+
+**/.git
+zshrc/README.md
+neovim/README.md
+neovim/doc/

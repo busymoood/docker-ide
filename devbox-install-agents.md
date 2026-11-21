@@ -1,52 +1,52 @@
-# devbox — Instructions pour un agent : câbler l'image au lieu de la faire à la main
+# devbox — Instructions for an agent: wire up the image instead of configuring by hand
 
-Fichier d'instructions destiné à un **agent de code** (OpenCode, Copilot CLI, Claude Code…).
-Copie-le à la racine du repo projet (ex: `devbox-install-agents.md`) et référence-le depuis le
-`AGENTS.md` du projet :
+Instruction file aimed at a **coding agent** (OpenCode, Copilot CLI, Claude Code…).
+Copy it to the root of the project repository (e.g. `devbox-install-agents.md`) and
+reference it from the project's `AGENTS.md`:
 
 ```markdown
-## Environnement de dev
-Utilise le conteneur devbox : suivre devbox-install-agents.md (ne pas configurer l'environnement à la main).
+## Dev environment
+Use the devbox container: follow devbox-install-agents.md (do not configure the environment by hand).
 ```
 
-> Source de vérité de l'image : repo [`busymoood/dotfiles-docker`](https://github.com/busymoood/dotfiles-docker) (README complet : chaînes SSH, Raspberry, VPS, WSL2).
+> Image source of truth: [`busymoood/dotfiles-docker`](https://github.com/busymoood/dotfiles-docker) repository (full README: SSH chains, Raspberry, VPS, WSL2).
 
 ---
 
-## Objectif
+## Objective
 
-Mettre en place, dans le repo courant, un **dev container** basé sur l'image multi-arch
-`ghcr.io/busymoood/dotfiles-docker` : Ubuntu 24.04 · NeoVim + LazyVim · tmux · zsh ·
+Set up, in the current repository, a **dev container** based on the multi-arch
+`ghcr.io/busymoood/dotfiles-docker` image: Ubuntu 24.04 · NeoVim + LazyVim · tmux · zsh ·
 LazyGit · ripgrep · fd · fzf · OpenCode · jq · build-essential · openssh-client.
 
-L'environnement est fourni à chaque démarrage par le bootstrap `onstart` : il clone le repo
-de dotfiles défini par `DOTFILES_REPO` (zsh, tmux, ssh) **et** le repo de config
-NeoVim/LazyVim défini par `NVIM_CONFIG_REPO` (dans `~/.config/nvim`), puis fait un `git pull`
-des deux. **Aucune clé privée ne vit jamais dans le conteneur** — tout passe par le socket de
-l'agent SSH, fourni soit par un montage direct (Docker natif), soit par le relais
-`devbox-agent-relay` embarqué dans l'image (Docker Desktop, où un socket Unix non-docker ne
-peut pas être monté).
+Personal configs (zsh, tmux, NeoVim/LazyVim) are **baked into the image**
+(`zshrc/` and `neovim/` from the image repository, copied into `/opt/devbox-config`
+then linked into `$HOME`). The `onstart` bootstrap no longer clones anything: it
+prepares the state volume, checks the SSH agent and sets the git editor. **No
+private key ever lives in the container** — everything goes through the SSH agent
+socket, provided either by a direct mount (native Docker) or by the
+`devbox-agent-relay` helper baked into the image (Docker Desktop, where a
+non-Docker Unix socket cannot be mounted).
 
 ---
 
-## 1. Prérequis (à vérifier avant tout)
+## 1. Prerequisites (check before anything else)
 
-| Prérequis | Comment vérifier | Si absent |
+| Prerequisite | How to check | If missing |
 |---|---|---|
-| Docker | `docker version` | demander à l'utilisateur de l'installer |
-| `DOTFILES_REPO` (URL du repo de dotfiles) | `echo ${DOTFILES_REPO:-}` | **demander à l'utilisateur** (obligatoire au runtime) |
-| `NVIM_CONFIG_REPO` (URL du repo de config NeoVim) | `echo ${NVIM_CONFIG_REPO:-}` | facultatif : l'image a un défaut (`git@…/lazyvim-config.git`, dépôt **privé**). Ne le surcharger que si l'utilisateur le demande ; `""` = nvim nu |
-| Agent SSH du poste hôte (Bitwarden / `ssh -A` / pont WSL) | `echo ${SSH_AUTH_SOCK:-}` puis `ssh-add -l` | les dev containers marchent quand même, mais **rien n'est cloné** : dotfiles et config NeoVim sont ignorés (avertissement, rattrapage automatique 10 min) — prévenir l'utilisateur |
-| **Docker Desktop** (macOS, Windows/WSL2) : relais TCP de l'agent | `lsof -iTCP:4242 -sTCP:LISTEN` | service launchd `com.busymoood.socat-ssh-agent` (macOS) : `socat TCP-LISTEN:4242,bind=0.0.0.0,reuseaddr,fork UNIX-CONNECT:$HOME/.bitwarden-ssh-agent.sock` ; Windows : `socat.exe` sur le même port vers `//./pipe/openssh-ssh-agent` |
+| Docker | `docker version` | ask the user to install it |
+| Host SSH agent (Bitwarden / `ssh -A` / WSL bridge) | `echo ${SSH_AUTH_SOCK:-}` then `ssh-add -l` | the dev container still starts (configs are in the image), but `git push` to GitHub will need HTTPS + PAT — warn the user |
+| **Docker Desktop** (macOS, Windows/WSL2): agent TCP relay | `lsof -iTCP:4242 -sTCP:LISTEN` | launchd service `com.busymoood.socat-ssh-agent` (macOS): `socat TCP-LISTEN:4242,bind=0.0.0.0,reuseaddr,fork UNIX-CONNECT:$HOME/.bitwarden-ssh-agent.sock`; Windows: `socat.exe` on the same port to `//./pipe/openssh-ssh-agent` |
 
-Ne jamais inventer la valeur de `DOTFILES_REPO`. Si l'utilisateur ne l'a pas, proposer
-`https://github.com/busymoood/<dotfiles>.git` et attendre sa confirmation.
+No configuration variable is required. Remove any `.env.example` / wrapper whose
+only purpose was to inject `DOTFILES_REPO` or `NVIM_CONFIG_REPO`: those variables
+no longer exist.
 
 ---
 
-## 2. Créer `.devcontainer/devcontainer.json`
+## 2. Create `.devcontainer/devcontainer.json`
 
-Créer le fichier **exactement** comme suit (tout est relatif au repo projet) :
+Create the file **exactly** as follows (everything is relative to the project repo):
 
 ```jsonc
 // .devcontainer/devcontainer.json
@@ -56,214 +56,165 @@ Créer le fichier **exactement** comme suit (tout est relatif au repo projet) :
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "containerEnv": {
-    "DOTFILES_REPO": "${localEnv:DOTFILES_REPO}",
-    "NVIM_CONFIG_REPO": "${localEnv:NVIM_CONFIG_REPO}",
-    // Docker Desktop : le socket local est recréé par devbox-agent-relay.
-    // Docker natif : mettre "SSH_AUTH_SOCK": "/ssh-agent" + le mount commenté.
+    // Docker Desktop: the local socket is recreated by devbox-agent-relay.
+    // Native Docker: set "SSH_AUTH_SOCK": "/ssh-agent" + the commented mount.
     "SSH_AUTH_SOCK": "${localEnv:DEVBOX_SSH_AUTH_SOCK:/tmp/ssh-agent.sock}"
   },
   "mounts": [
-    // Docker natif uniquement (Linux, WSL2 sans Docker Desktop) :
+    // Native Docker only (Linux, WSL2 without Docker Desktop):
     // "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind",
     "source=devbox-home,target=/home/dev/.local,type=volume"
   ],
-  // 1) agent SSH (montage direct ou relais TCP, + rattrapage si verrouillé)
-  // 2) dotfiles + config NeoVim (pull), permissions du volume
+  // 1) SSH agent (direct mount or TCP relay, + retry if locked)
+  // 2) onstart local checks (no clone)
   "postStartCommand": "devbox-agent-relay start; onstart --no-shell"
 }
 ```
 
-Points d'attention pour l'agent :
+Points to watch for the agent:
 
-- **Workspace bind** : le code vit dans le conteneur sur `/workspace` (monté depuis le repo). Ne pas proposer d'autre chemin.
-- **Volume `devbox-home`** : état des outils (plugins nvim, Mason, auth opencode, clé Supermaven, browsers Playwright) persistant entre sessions. Laisser le nom tel quel pour partager l'état avec les sessions `devbox.sh`. Dans `docker-compose.yml`, forcer `volumes: { devbox-home: { name: devbox-home } }` sinon Compose préfixe par le nom du projet et crée un second volume.
-- **Config NeoVim** : clonée par `onstart` dans `~/.config/nvim` (dépôt privé → agent SSH requis). Ne pas y écrire de config à la main : elle est versionnée dans `NVIM_CONFIG_REPO`.
-- **Agent SSH** : `devbox-agent-relay start` (helper de l'image) gère montage direct **et** relais TCP, journalise dans `~/.cache/devbox-agent-relay.log` et arme un rattrapage (30 s × 10 min) si Bitwarden est verrouillé. `devbox-agent-relay doctor` donne l'état complet.
-- **Surcoût projet** : tout ce que le projet ajoute (Node, Python, Chromium…) doit vivre dans un script idempotent appelé par `postCreateCommand` (provisionnement) et `postStartCommand` (relais + `onstart`), **pas** dupliqué entre `devcontainer.json` et `docker-compose.yml`.
-- **Tag pinnable** : `:latest` ou une version publiée (`:v0.6.0`, `:0.6.0`) — **ne jamais écrire un tag qui n'existe pas** (tags publiés : `latest`, `main`, `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X`, `sha-<commit>`).
-- **`devcontainer up` sur un conteneur existant ne rejoue pas `postStartCommand`** : pour un cycle complet, `--remove-existing-container` (volume conservé) ou exécuter `devbox-agent-relay start; onstart --no-shell` à la main.
-- Si `SSH_AUTH_SOCK` n'existe pas sur l'hôte **et** que Docker est natif, l'entrée de `mounts` échoue : la retirer, prévenir l'utilisateur, et laisser `devbox-agent-relay` signaler l'absence d'agent.
+- **Workspace bind**: code lives in the container at `/workspace` (mounted from the repo). Do not propose another path.
+- **`devbox-home` volume**: tool state (nvim plugins, Mason, opencode auth, Supermaven key, Playwright browsers) persisting between sessions. Keep the literal name so state is shared with `devbox.sh` sessions. In `docker-compose.yml`, force `volumes: { devbox-home: { name: devbox-home } }` otherwise Compose prefixes it with the project name and creates a second volume.
+- **NeoVim config**: already in the image (`/opt/devbox-config/nvim` → `~/.config/nvim`). Do not hand-write config inside the container: edit `neovim/` in the image repository and rebuild the image. Plugins, on the other hand, are installed on first launch into the `devbox-home` volume.
+- **SSH agent**: `devbox-agent-relay start` (image helper) handles both direct mounts **and** TCP relays, logs to `~/.cache/devbox-agent-relay.log` and arms a retry (30 s × 10 min) if Bitwarden is locked. `devbox-agent-relay doctor` gives the full state.
+- **Project overhead**: anything the project adds (Node, Python, Chromium…) must live in an idempotent script called by `postCreateCommand` (provisioning) and `postStartCommand` (relay + `onstart`), **not** duplicated between `devcontainer.json` and `docker-compose.yml`.
+- **Pinnable tag**: `:latest` or a published version (`:v0.6.0`, `:0.6.0`) — **never write a tag that does not exist** (published tags: `latest`, `main`, `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X`, `sha-<commit>`).
+- **`devcontainer up` on an existing container does not replay `postStartCommand`**: for a full cycle, use `--remove-existing-container` (volume preserved) or run `devbox-agent-relay start; onstart --no-shell` manually.
+- If `SSH_AUTH_SOCK` does not exist on the host **and** Docker is native, the `mounts` entry will fail: remove it, warn the user, and let `devbox-agent-relay` report the missing agent.
 
-### Variables d'environnement : `.env.example` + wrapper
-
-La CLI devcontainers **ne lit pas** les fichiers `.env` : elle substitue `${localEnv:VAR}`
-depuis l'environnement du shell. Ne figez donc pas les valeurs dans
-`devcontainer.json` — fournissez un modèle `.env.example` (versionné) et un wrapper :
-
-```dotenv
-# .env.example — copier en .env (gitignoré) : cp .env.example .env
-DOTFILES_REPO=git@github.com:<vous>/<dotfiles>.git
-NVIM_CONFIG_REPO=git@github.com:<vous>/<lazyvim-config>.git
-# Optionnel — cible du relais agent SSH (défaut : host.docker.internal:4242)
-# DEVBOX_SSH_RELAY_TARGET=host.docker.internal:4242
-# Optionnel — socket de l'agent dans le conteneur
-# DEVBOX_SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-```
-
-```bash
-# scripts/devbox-up.sh — charge .env puis lance la CLI
-#!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
-[[ -f .env ]] || { echo "ERREUR : cp .env.example .env"; exit 1; }
-set -a; . ./.env; set +a
-: "${DOTFILES_REPO:?DOTFILES_REPO manquant dans .env}"
-exec devcontainer up --workspace-folder . "$@"
-```
-
-Dans `devcontainer.json`, utiliser `${localEnv:VAR:}` (défaut vide) ou
-`${localEnv:VAR:défaut}` — **ne pas** utiliser `${localEnv:SSH_AUTH_SOCK…}` : la variable
-de l'hôte (chemin macOS/Bitwarden) serait injectée dans le conteneur. Préfixer
-(`DEVBOX_SSH_AUTH_SOCK`) pour éviter la collision.
-
-`docker compose` lit `.env` nativement (interpolation `${VAR}`), donc le même fichier sert les
-deux modes. Ajouter au `.gitignore` :
-```
-.env
-.env.*
-!.env.example
-```
-
-> **Piège `:latest`** : la CLI réutilise l'image si le tag existe localement, même périmée
-> (symptôme : ancien utilisateur / binaires manquants). Soit épingler une version (`:v0.6.0`),
-> soit `docker pull ghcr.io/busymoood/dotfiles-docker:latest` avant `up`.
+> **`:latest` trap**: the CLI reuses the image if the tag exists locally, even if outdated
+> (symptom: stale configs or missing binaries). Either pin a version (`:v0.6.0`),
+> or run `docker pull ghcr.io/busymoood/dotfiles-docker:latest` before `up`.
 
 ---
 
-## 3. Démarrer et vérifier (checklist)
+## 3. Start and verify (checklist)
 
-Lancer (CLI devcontainers, pas besoin de VS Code) :
+Launch (devcontainers CLI, no VS Code needed):
 
 ```bash
-# si @devcontainers/cli n'est pas installé :
+# if @devcontainers/cli is not installed:
 npm install -g @devcontainers/cli
-
-# variables puis démarrage (le wrapper exporte .env, la CLI ne le lit pas)
-cp .env.example .env && $EDITOR .env
-./scripts/devbox-up.sh            # = devcontainer up --workspace-folder .
+devcontainer up --workspace-folder .
 ```
 
-Puis vérifier :
+Then verify:
 ```bash
-# nom du conteneur : devcontainer up l'affiche (ou docker ps --filter label=devcontainer.local_folder)
-docker exec -it <conteneur> bash -lc '
+# container name: printed by devcontainer up (or docker ps --filter label=devcontainer.local_folder)
+docker exec -it <container> bash -lc '
   devbox-agent-relay doctor &&
   nvim --version | head -1 && lazygit --version | head -1 && opencode --version &&
-  ls /workspace && [ -d "$HOME/dotfiles" ] && echo "dotfiles: OK" &&
-  [ -d "$HOME/.config/nvim/.git" ] && echo "nvim config: OK"'
+  ls -l ~/.zshrc ~/.tmux.conf ~/.config/nvim'
 ```
 
-Checklist à cocher et rapporter :
-1. `devbox-agent-relay doctor` : socket présent, **clés listées** (Bitwarden déverrouillé), `~/.config/nvim` et `~/dotfiles` présents.
-2. `onstart` n'a pas écrit d'erreur bloquante (avertissements « agent muet » tolérés si Bitwarden verrouillé → le rattrapage rejoue `onstart` après déverrouillage).
-3. `nvim`, `lazygit`, `opencode`, `tmux`, `rg`, `fd`, `fzf` répondent.
-4. `$HOME/dotfiles` existe et `$HOME/.zshrc` pointe vers `~/dotfiles/zsh/.zshrc` (ou `~/dotfiles/.zshrc` selon le layout du repo).
-5. `$HOME/.config/nvim/.git` existe (config LazyVim clonée) ; `nvim` puis `:Lazy` répond. Sinon : agent SSH / `NVIM_CONFIG_REPO`.
-6. `git -C /workspace config user.name` OK (identité de commits) → sinon c'est un sujet dotfiles, pas dev container.
+Checklist to tick and report:
+1. `devbox-agent-relay doctor`: socket present, **keys listed** (Bitwarden unlocked).
+2. `onstart` wrote no blocking error (a "muted agent" warning is fine if Bitwarden is locked).
+3. `nvim`, `lazygit`, `opencode`, `tmux`, `rg`, `fd`, `fzf` respond.
+4. `~/.zshrc` → `/opt/devbox-config/zshrc`, `~/.tmux.conf` → `/opt/devbox-config/tmux.conf`, `~/.config/nvim` → `/opt/devbox-config/nvim`.
+5. `nvim` then `:Lazy` responds (first launch: ~1 min of plugin downloads into `devbox-home`).
+6. `git -C /workspace config user.name` is OK (commit identity) → otherwise it is a git config matter, not a dev container one.
 
-Sortie de session : `docker exec -it <conteneur> zsh -l` (zsh est le shell par défaut; tmux → nvim sont le flux normal).
-
----
-
-## 4. Interaction git / commits
-
-- L'authentification se fait **via l'agent SSH forwardé** (`ssh-add -l` dans la session pour tester). Rien d'autre à configurer.
-- Si l'agent est vide : prévenir l'utilisateur ("Bitwarden verrouillé ?") sans casser la session — c'est exactement le comportement d'`onstart`.
+Leave the session with `docker exec -it <container> zsh -l` (zsh is the default shell; tmux → nvim is the normal flow).
 
 ---
 
-## 5. Dépannage rapide
+## 4. Git / commits interaction
 
-| Symptôme | Cause probable | Action |
+- Authentication goes **through the forwarded SSH agent** (`ssh-add -l` in the session to test). Nothing else to configure.
+- If the agent is empty: warn the user ("Bitwarden locked?") without breaking the session — that is exactly `onstart`'s behavior.
+
+---
+
+## 5. Quick troubleshooting
+
+| Symptom | Likely cause | Action |
 |---|---|---|
-| `DOTFILES_REPO` vide dans le conteneur | variable non exportée dans le shell hôte avant `devcontainer up` | relancer avec `DOTFILES_REPO=… devcontainer up …` |
-| échec clonage dotfiles | repo privé + agent SSH absent/verrouillé | `devbox-agent-relay doctor` ; `ssh-add -l` sur l'hôte ; `devbox-agent-relay start` après déverrouillage |
-| `~/.config/nvim` absent, `nvim` nu | agent SSH absent/verrouillé **au moment du clone** (le repo LazyVim est privé) ou `NVIM_CONFIG_REPO=""` | déverrouiller, puis `devbox-agent-relay start; onstart --no-shell` (le rattrapage automatique le fait seul ≤10 min) ; vérifier `NVIM_CONFIG_REPO` |
-| `ssh-add -l` → `No such file or directory` (Docker Desktop) | relais local mort / jamais démarré | `devbox-agent-relay start` ; vérifier côté hôte `lsof -iTCP:4242 -sTCP:LISTEN` |
-| `ssh-add -l` → `communication with agent failed` | agent de l'hôte muet (Bitwarden verrouillé) | déverrouiller Bitwarden ; `ssh-add -l` doit lister les clés **sur l'hôte** d'abord |
-| après un `devcontainer up` rien n'est rejoué | `postStartCommand` ne tourne pas sur un conteneur existant | `devcontainer up --remove-existing-container` (volume conservé) ou `devbox-agent-relay start; onstart --no-shell` |
-| `~/.config/nvim` existe mais pas de `.git` | dossier créé à la main / clone interrompu par une version antérieure | `mv ~/.config/nvim ~/.config/nvim.old` puis redémarrer (le bootstrap ne supprime jamais un dossier existant) |
-| `Permission denied` sur `~/.local/share/nvim` (LazyVim n'installe aucun plugin) | volume `devbox-home` créé en `root:root` par Docker | corrigé depuis v0.4.0 (`onstart` corrige les permissions du volume d'état) ; sinon `sudo chown -R dev:dev ~/.local` |
-| prompt « Download spell file? » pour `fr` | dictionnaire français absent | corrigé depuis v0.4.1 (fr préinstallé dans le runtime NeoVim) ; sinon répondre `y` une fois |
-| `[supermaven-nvim] sm-agent download failed` | le plugin écrit un fichier temporaire **relatif** ; `WORKDIR` non inscriptible | corrigé depuis v0.4.1 (`WORKDIR /home/dev`) ; sinon `cd ~` avant de lancer nvim |
-| clé Supermaven à redemander à chaque conteneur | `~/.supermaven/config.json` hors volume | vérifier que `~/.supermaven` est un symlink vers `~/.local/share/supermaven` (créé par `onstart` depuis v0.4.1) |
-| `ssh-keyscan`/known_hosts bruit au boot | premier démarrage sans `~/.ssh` | corrigé depuis v0.2.0 — signaler si observé sur une image plus ancienne |
-| downloads lents/504 GitHub | intercepté seulement **à la construction de l'image** (CI) ; un dev container tire une image toute prête | ne rien faire ; si ça persiste sur les pulls d'image, vérifier l'état de l'infra GitHub |
-| nvim vide/pas de plugins, mais `~/.config/nvim/.git` présent | premier lancement de LazyVim (~1 min téléchargements) | patienter ; état en cache dans `devbox-home` |
+| `ssh-add -l` → `No such file or directory` (Docker Desktop) | local relay dead / never started | `devbox-agent-relay start`; check on the host `lsof -iTCP:4242 -sTCP:LISTEN` |
+| `ssh-add -l` → `communication with agent failed` | host agent muted (Bitwarden locked) | unlock Bitwarden; `ssh-add -l` must list keys **on the host** first |
+| after `devcontainer up` nothing is replayed | `postStartCommand` does not run on an existing container | `devcontainer up --remove-existing-container` (volume preserved) or `devbox-agent-relay start; onstart --no-shell` |
+| configs absent or stale in the container | stale local image (configs are in the image) | `docker pull ghcr.io/busymoood/dotfiles-docker:latest` then recreate the container |
+| `Permission denied` on `~/.local/share/nvim` (LazyVim installs no plugin) | `devbox-home` volume created `root:root` by Docker | fixed since v0.4.0 (`onstart` fixes state-volume permissions); otherwise `sudo chown -R dev:dev ~/.local` |
+| "Download spell file?" prompt for `fr` | French dictionary missing | fixed since v0.4.1 (fr preinstalled in the NeoVim runtime); otherwise answer `y` once |
+| `[supermaven-nvim] sm-agent download failed` | plugin writes a **relative** temporary file; `WORKDIR` not writable | fixed since v0.4.1 (`WORKDIR /home/dev`); otherwise `cd ~` before launching nvim |
+| Supermaven key requested for every container | `~/.supermaven/config.json` outside the volume | check that `~/.supermaven` is a symlink to `~/.local/share/supermaven` (created by `onstart` since v0.4.1) |
+| `ssh-keyscan`/known_hosts noise at boot | first start without `~/.ssh` | fixed since v0.2.0 — report if seen on an older image |
+| slow downloads / GitHub 504s | handled only **at image build time** (CI); a dev container pulls a ready-made image | do nothing; if image pulls keep failing, check GitHub infra status |
+| nvim empty / no plugins | first LazyVim launch (~1 min of downloads) | wait; state is cached in `devbox-home` |
 
 ---
 
-## 6. Après la première mise en place
+## 6. After the first setup
 
-- Commiter `.devcontainer/devcontainer.json` dans le repo projet (n'inclut ni secrets ni URL personnelle — `DOTFILES_REPO` vient de l'environnement).
-- Documenter dans le README du projet :
+- Commit `.devcontainer/devcontainer.json` in the project repo (it contains no secrets, no personal URL and no config variable).
+- Document in the project README:
   ```bash
-  devcontainer up --workspace-folder .   # DOTFILES_REPO à exporter
-  docker exec -it <conteneur> zsh
+  devcontainer up --workspace-folder .
+  docker exec -it <container> zsh
   ```
-- Rappel de mise à jour du tooling : `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (ou `:v0.6.0` épinglé). Les configs n'ont **pas** besoin de rebuild d'image : pousser dans le repo de dotfiles ou dans le repo de config NeoVim + redémarrer la session suffit.
+- Update reminder: `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (or pinned `:v0.6.0`). Configs are in the image: to change them, edit `zshrc/` or `neovim/` in the image repository, push to `main` (CI rebuilds), then pull the image and **Rebuild Container** on each machine.
 
 ---
 
-## 7. Annexe — Agent SSH détaillé
+## 7. Appendix — SSH agent in detail
 
-Aucune clé privée ne quitte **Bitwarden sur votre machine principale**. Ce qui circule, c'est uniquement le **socket** de l'agent (`$SSH_AUTH_SOCK`). Selon le moteur Docker, deux modes :
+No private key ever leaves **Bitwarden on your main machine**. What travels is only the agent **socket** (`$SSH_AUTH_SOCK`). Depending on the Docker engine, there are two modes:
 
-| Hôte | Mode | Mise en place |
+| Host | Mode | Setup |
 |---|---|---|
-| **Linux natif** — VPS, Raspberry Pi, WSL2 avec Docker natif | montage direct du socket | `-v "$SSH_AUTH_SOCK:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent` (automatique avec `bin/devbox.sh`) |
-| **Docker Desktop** — macOS, Windows/WSL2 avec intégration Docker Desktop | **relais TCP** (un socket Unix non-docker ne peut pas être monté) | hôte : `socat TCP-LISTEN:4242,bind=0.0.0.0,reuseaddr,fork UNIX-CONNECT:$HOME/.bitwarden-ssh-agent.sock` (service launchd) · conteneur : `-e SSH_AUTH_SOCK=/tmp/ssh-agent.sock -e DEVBOX_SSH_RELAY=1` |
+| **Native Linux** — VPS, Raspberry Pi, WSL2 with native Docker | direct socket mount | `-v "$SSH_AUTH_SOCK:/ssh-agent" -e SSH_AUTH_SOCK=/ssh-agent` (automatic with `bin/devbox.sh`) |
+| **Docker Desktop** — macOS, Windows/WSL2 with Docker Desktop integration | **TCP relay** (a non-Docker Unix socket cannot be mounted) | host: `socat TCP-LISTEN:4242,bind=0.0.0.0,reuseaddr,fork UNIX-CONNECT:$HOME/.bitwarden-ssh-agent.sock` (launchd service) · container: `-e SSH_AUTH_SOCK=/tmp/ssh-agent.sock -e DEVBOX_SSH_RELAY=1` |
 
-`bin/devbox.sh` choisit tout seul : il interroge `docker info` (Docker Desktop ?) et bascule en mode relais si nécessaire.
+`bin/devbox.sh` decides on its own: it queries `docker info` (Docker Desktop?) and switches to relay mode if needed.
 
-**Helper `devbox-agent-relay`** (embarqué dans l'image) :
+**`devbox-agent-relay` helper** (baked into the image):
 
 ```bash
-devbox-agent-relay start    # crée le socket (relais TCP) ou vérifie un montage direct
-devbox-agent-relay doctor   # socket, cible, PID, clés visibles, configs
-devbox-agent-relay stop     # arrête le relais local
+devbox-agent-relay start    # create the socket (TCP relay) or check a direct mount
+devbox-agent-relay doctor   # socket, target, PID, visible keys, configs
+devbox-agent-relay stop     # stop the local relay
 ```
 
-- Le relais tourne en **session détachée** (`setsid`) : il survit à la fin du `postStartCommand` (un `nohup … &` seul est tué avec la session → agent muet ensuite).
-- **Agent verrouillé** (Bitwarden fermé) : `start` prévient et arme un **rattrapage** (30 s × 10 min) qui rejoue `onstart` dès que des clés apparaissent — inutile de recréer le conteneur.
-- `onstart` attend le socket jusqu'à 5 s, puis vérifie l'agent **avant** les clonages : sans agent, les repos `git@…` (dotfiles privés, config NeoVim) sont sautés pour ce démarrage.
+- The relay runs in a **detached session** (`setsid`): it survives the end of `postStartCommand` (a plain `nohup … &` dies with the session → muted agent afterwards).
+- **Locked agent** (Bitwarden closed): `start` warns and arms a **retry** (30 s × 10 min) that replays `onstart` as soon as keys appear — no need to recreate the container.
+- `onstart` waits up to 5 s for the socket then checks the agent for information only: without an agent, `git push` to GitHub will need HTTPS + PAT (configs, they are already in the image).
 
-**Chaînes de forwarding :**
+**Forwarding chains:**
 
-| Scénario | Chaîne |
+| Scenario | Chain |
 |---|---|
-| macOS + Docker Desktop | Bitwarden → `~/.bitwarden-ssh-agent.sock` → socat TCP `4242` (launchd) → relais conteneur → `/tmp/ssh-agent.sock` |
-| macOS + moteur Docker natif (Colima, Docker via VM Linux) | Bitwarden → `~/.bitwarden-ssh-agent.sock` → montage direct `/ssh-agent` |
-| WSL2 + Docker natif | Bitwarden (Windows) → pipe `openssh-ssh-agent` → npiperelay+socat → `~/.ssh/agent.sock` → montage `/ssh-agent` |
-| WSL2 + Docker Desktop | idem jusqu'à `~/.ssh/agent.sock` → socat TCP `4242` → relais conteneur |
-| Raspberry / VPS (Docker natif) | Bitwarden (Mac) → `ssh -A` → socket sshd sur l'hôte → montage `/ssh-agent` |
+| macOS + Docker Desktop | Bitwarden → `~/.bitwarden-ssh-agent.sock` → socat TCP `4242` (launchd) → container relay → `/tmp/ssh-agent.sock` |
+| macOS + native Docker engine (Colima, Docker via Linux VM) | Bitwarden → `~/.bitwarden-ssh-agent.sock` → direct mount `/ssh-agent` |
+| WSL2 + native Docker | Bitwarden (Windows) → `openssh-ssh-agent` pipe → npiperelay+socat → `~/.ssh/agent.sock` → mount `/ssh-agent` |
+| WSL2 + Docker Desktop | same up to `~/.ssh/agent.sock` → socat TCP `4242` → container relay |
+| Raspberry / VPS (native Docker) | Bitwarden (Mac) → `ssh -A` → sshd socket on the host → mount `/ssh-agent` |
 
-> Le conteneur ne peut **que demander des signatures** à l'agent — il ne lit jamais de clé privée.
+> The container can **only request signatures** from the agent — it never reads a private key.
 >
-> Le relais launchd écoute sur `0.0.0.0:4242` (`host.docker.internal` n'atteint pas la loopback) : sur un réseau non fiable, restreindre le port au sous-réseau Docker Desktop avec une règle `pf`.
+> The launchd relay listens on `0.0.0.0:4242` (`host.docker.internal` cannot reach loopback): on an untrusted network, restrict the port to the Docker Desktop subnet with a `pf` rule.
 
-**Diagnostic rapide**
+**Quick diagnosis**
 
 ```bash
-# hôte (Docker Desktop) : le relais tourne-t-il ?
+# host (Docker Desktop): is the relay running?
 lsof -iTCP:4242 -sTCP:LISTEN
-ssh-add -l                                  # les clés doivent apparaître ici d'abord
+ssh-add -l                                  # keys must appear here first
 
-# conteneur : état complet (relais, socket, clés, configs)
+# container: full state (relay, socket, keys, configs)
 devbox-agent-relay doctor
-# après déverrouillage de Bitwarden :
+# after unlocking Bitwarden:
 devbox-agent-relay start
 ```
 
-**Symptômes typiques :**
+**Typical symptoms:**
 
-| Symptôme | Cause | Action |
+| Symptom | Cause | Action |
 |---|---|---|
-| `ssh-add -l` → `No such file or directory` (conteneur) | relais mort (ancien `nohup` tué avec la session) | `devbox-agent-relay start` |
-| `ssh-add -l` → `communication with agent failed` | agent hôte muet (Bitwarden verrouillé) | déverrouiller Bitwarden, `ssh-add -l` sur l'hôte, puis `devbox-agent-relay start` |
-| `nvim` nu après un `devcontainer up` | `postStartCommand` non rejoué sur un conteneur existant | `devcontainer up --remove-existing-container` (volume conservé) ou `devbox-agent-relay start; onstart --no-shell` |
+| `ssh-add -l` → `No such file or directory` (container) | dead relay (old `nohup` killed with the session) | `devbox-agent-relay start` |
+| `ssh-add -l` → `communication with agent failed` | muted host agent (Bitwarden locked) | unlock Bitwarden, `ssh-add -l` on the host, then `devbox-agent-relay start` |
+| stale configs after a `devcontainer up` | `postStartCommand` not replayed on an existing container / stale local image | `docker pull …` then `devcontainer up --remove-existing-container` (volume preserved) |
 
-**Variante dev container — Docker natif** (défaut du README = Docker Desktop) : dans `.devcontainer/devcontainer.json`, remplacer `"SSH_AUTH_SOCK": "${localEnv:DEVBOX_SSH_AUTH_SOCK:/tmp/ssh-agent.sock}"` par `"SSH_AUTH_SOCK": "/ssh-agent"` et décommenter dans `mounts` :
+**Dev container variant — native Docker** (README default = Docker Desktop): in `.devcontainer/devcontainer.json`, replace `"SSH_AUTH_SOCK": "${localEnv:DEVBOX_SSH_AUTH_SOCK:/tmp/ssh-agent.sock}"` with `"SSH_AUTH_SOCK": "/ssh-agent"` and uncomment in `mounts`:
 
 ```jsonc
 "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind"

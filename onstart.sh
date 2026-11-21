@@ -1,69 +1,65 @@
 #!/usr/bin/env bash
-# onstart.sh — Bootstrap de l'environnement devbox.
+# onstart.sh — devbox environment bootstrap.
 #
-# Idempotent : exécutable à chaque démarrage de conteneur.
-#   1. Volume d'état (~/.local) : permissions + états outils hors volume
-#   2. Station SSH : s'assurer que github.com est connu
-#   3. Vérifie l'agent SSH forwardé (attente du relais si créé en parallèle)
-#   4. Clone ou met à jour le repo de dotfiles (DOTFILES_REPO)
-#   5. Clone ou met à jour la config NeoVim/LazyVim (NVIM_CONFIG_REPO)
-#   6. Crée les symlinks de configuration (zsh, tmux, ssh)
-#   7. Lance la session (zsh) si un shell interactif est demandé
+# Idempotent: runs at every container start.
+#   1. State volume (~/.local): permissions + tool state outside the image
+#   2. SSH station: make sure github.com is known
+#   3. Check the forwarded SSH agent (wait for a relay started in parallel)
+#   4. git core.editor = nvim
+#   5. Zsh as the default shell
+#   6. Start the session (zsh) when an interactive shell is requested
 #
-# Usage :
-#   onstart              → bootstrap + zsh (entrypoint de l'image)
-#   onstart --no-shell   → bootstrap uniquement (ex: postStartCommand)
+# NB: configs (zsh, tmux, NeoVim/LazyVim) are now baked into the image
+# (/opt/devbox-config + symlinks in $HOME). No network clone at startup, even
+# without an SSH agent. The SSH relay is still useful for git on the workspace.
 #
-# Variables :
-#   DOTFILES_REPO     URL du repo de dotfiles (git@… ou https://…)
-#   NVIM_CONFIG_REPO  URL du repo de config NeoVim/LazyVim
-#                     (défaut : git@github.com:Thejulfi/lazyvim-config.git,
-#                      NVIM_CONFIG_REPO="" pour désactiver)
-#   DEVBOX_SSH_RELAY  1 = recréer le socket de l'agent depuis un relais TCP
-#                     (Docker Desktop, où un socket Unix non-docker ne peut
-#                     pas être monté). Laisser vide pour un montage direct.
-#   DEVBOX_SSH_RELAY_TARGET  cible du relais (host.docker.internal:4242)
+# Usage:
+#   onstart              → bootstrap + zsh (image entrypoint)
+#   onstart --no-shell   → bootstrap only (e.g. postStartCommand)
+#
+# Variables:
+#   DEVBOX_SSH_RELAY          1 = recreate the agent socket from a TCP relay
+#                             (Docker Desktop, where a non-Docker Unix socket
+#                             cannot be mounted). Leave empty for direct mount.
+#   DEVBOX_SSH_RELAY_TARGET   relay target (host.docker.internal:4242)
 set -euo pipefail
 
-DOTFILES_DIR="${HOME:-/home/dev}/dotfiles"
-NVIM_DIR="${HOME:-/home/dev}/.config/nvim"
-NVIM_REPO="${NVIM_CONFIG_REPO-git@github.com:Thejulfi/lazyvim-config.git}"
 NO_SHELL=0
 [[ "${1:-}" == "--no-shell" ]] && NO_SHELL=1
 
 log()  { printf '\033[1;34m[devbox]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[devbox][attention]\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[1;33m[devbox][warning]\033[0m %s\n' "$*" >&2; }
 
 # ----------------------------------------------------------------------------
-# 1. Volume d'état : ~/.local est un volume nommé créé par Docker en root:root
-#    (le chemin n'existe pas dans l'image) → dev ne peut rien y écrire et
-#    LazyVim/Mason/opencode échouent. On ne chown que si nécessaire : pas de
-#    parcours récursif inutile d'un volume déjà correct (browsers Playwright…).
+# 1. State volume: ~/.local is a named volume created by Docker as root:root
+#    (the path does not exist in the image), so `dev` cannot write to it and
+#    LazyVim/Mason/opencode fail. Only chown when needed: no pointless recursive
+#    walk of an already-correct volume (Playwright browsers…).
 # ----------------------------------------------------------------------------
 LOCAL_DIR="${HOME}/.local"
 mkdir -p "$LOCAL_DIR"
 if [[ ! -w "$LOCAL_DIR" ]]; then
-  log "Volume ${LOCAL_DIR} non inscriptible — correction des permissions…"
+  log "Volume ${LOCAL_DIR} is not writable — fixing permissions…"
   sudo chown -R "$(id -u):$(id -g)" "$LOCAL_DIR" 2>/dev/null \
-    || warn "Impossible de rendre ${LOCAL_DIR} inscriptible — plugins nvim indisponibles."
+    || warn "Could not make ${LOCAL_DIR} writable — nvim plugins unavailable."
 fi
 
-# Certains outils écrivent dans $HOME, hors volume (donc perdus à chaque
-# recréation du conteneur) : les rediriger vers le volume d'état.
-#   supermaven-nvim/sm-agent → binaire + clé API dans ~/.supermaven/config.json
+# Some tools write to $HOME, outside the volume (and thus lost on container
+# recreation): redirect them into the state volume.
+#   supermaven-nvim/sm-agent → binary + API key in ~/.supermaven/config.json
 SUPERMAVEN_DIR="${LOCAL_DIR}/share/supermaven"
 if [[ ! -L "${HOME}/.supermaven" ]]; then
   if [[ -e "${HOME}/.supermaven" ]]; then
-    warn "${HOME}/.supermaven existe et n'est pas un lien — laissé intact (clé Supermaven non persistante)."
+    warn "${HOME}/.supermaven exists and is not a symlink — left as is (Supermaven key not persisted)."
   else
     mkdir -p "$SUPERMAVEN_DIR"
     ln -s "$SUPERMAVEN_DIR" "${HOME}/.supermaven"
-    log "État Supermaven persisté dans le volume (${SUPERMAVEN_DIR})"
+    log "Supermaven state persisted in the volume (${SUPERMAVEN_DIR})"
   fi
 fi
 
 # ----------------------------------------------------------------------------
-# 2. Station SSH : s'assurer que github.com est connu (clone via agent SSH)
+# 2. SSH station: make sure github.com is known (git on the workspace)
 # ----------------------------------------------------------------------------
 mkdir -p "${HOME}/.ssh"
 if [[ ! -f "${HOME}/.ssh/known_hosts" ]] || ! ssh-keygen -F github.com -f "${HOME}/.ssh/known_hosts" >/dev/null 2>&1; then
@@ -71,148 +67,51 @@ if [[ ! -f "${HOME}/.ssh/known_hosts" ]] || ! ssh-keygen -F github.com -f "${HOM
 fi
 
 # ----------------------------------------------------------------------------
-# 3. Agent SSH : détection (avant tout clonage, qui en dépend)
+# 3. SSH agent: detection
 # ----------------------------------------------------------------------------
 AGENT_SOCK="${SSH_AUTH_SOCK:-/ssh-agent}"
 
-# Docker Desktop (macOS, Windows/WSL2) ne peut pas monter un socket Unix
-# non-docker : `DEVBOX_SSH_RELAY=1` demande de recréer le socket local depuis
-# le relais TCP de l'hôte. Le helper arme aussi un rattrapage si l'agent est
-# verrouillé au démarrage (Bitwarden).
+# Docker Desktop (macOS, Windows/WSL2) cannot mount a non-Docker Unix socket:
+# `DEVBOX_SSH_RELAY=1` asks to recreate the local socket from the host TCP
+# relay. The helper also arms a retry if the agent is locked at startup
+# (Bitwarden).
 if [[ "${DEVBOX_SSH_RELAY:-0}" == "1" ]] && command -v devbox-agent-relay >/dev/null 2>&1; then
-  devbox-agent-relay start || warn "Relais agent SSH indisponible — diagnostic : devbox-agent-relay doctor"
+  devbox-agent-relay start || warn "SSH agent relay unavailable — diagnose with: devbox-agent-relay doctor"
 fi
 
-# Le socket peut être créé de façon asynchrone (relais socat lancé par un
-# postStartCommand en parallèle) : on lui laisse jusqu'à 5 s pour apparaître.
+# The socket may be created asynchronously (socat relay started by a parallel
+# postStartCommand): allow up to 5 s for it to appear.
 for _ in $(seq 1 25); do
   [[ -S "$AGENT_SOCK" ]] && break
   sleep 0.2
 done
 
-AGENT_OK=0
 if [[ -S "$AGENT_SOCK" ]]; then
   if ssh-add -l >/dev/null 2>&1; then
-    AGENT_OK=1
-    log "Agent SSH OK ($(ssh-add -l 2>/dev/null | wc -l | tr -d ' ') clé(s) disponible(s))"
+    log "SSH agent OK ($(ssh-add -l 2>/dev/null | wc -l | tr -d ' ') key(s) available)"
   else
-    warn "Socket agent présent mais vide — Bitwarden verrouillé ?"
+    warn "Agent socket present but empty — Bitwarden locked?"
   fi
 else
-  warn "Aucun agent SSH forwardé — git sur GitHub nécessitera HTTPS + PAT."
+  warn "No forwarded SSH agent — git on GitHub will need HTTPS + PAT."
 fi
 
 # ----------------------------------------------------------------------------
-# 4. Repo de dotfiles : clone ou pull
+# 4. Git: nvim as the commit message editor (unless already set).
+# Tolerant: ~/.gitconfig may be a single-file bind mount where git cannot
+# replace the file (no rename) — must not interrupt onstart.
 # ----------------------------------------------------------------------------
-REPO="${DOTFILES_REPO:-}"
-
-# Si l'agent SSH est opérationnel et que l'URL est HTTPS, convertir en SSH :
-# permet de cloner des repos privés via la clé forwardée (Bitwarden, etc.)
-if [[ -n "$REPO" && "$REPO" == https://github.com/* && "$AGENT_OK" -eq 1 ]]; then
-  REPO="git@github.com:${REPO#https://github.com/}"
-  log "Agent SSH détecté → clonage via git@github.com"
-fi
-
-if [[ -z "$REPO" ]]; then
-  warn "DOTFILES_REPO n'est pas défini — configurations non installées."
-  warn "Lancez avec : -e DOTFILES_REPO=https://github.com/<user>/<dotfiles>.git"
-elif [[ "$REPO" == git@* && "$AGENT_OK" -eq 0 ]]; then
-  warn "Agent SSH indisponible → dotfiles non clonées (${REPO})."
-elif [[ -d "${DOTFILES_DIR}/.git" ]]; then
-  log "Mise à jour des dotfiles (${DOTFILES_DIR})…"
-  git -C "${DOTFILES_DIR}" pull --ff-only || warn "git pull a échoué — dotfiles conservées"
-else
-  log "Clonage des dotfiles depuis ${REPO}…"
-  rm -rf "${DOTFILES_DIR}"
-  git clone "${REPO}" "${DOTFILES_DIR}" || warn "Le clone a échoué — vérifiez l'URL ou l'agent SSH"
-fi
-
-# ----------------------------------------------------------------------------
-# 5. Config NeoVim / LazyVim : dépôt dédié, prioritaire sur dotfiles/nvim
-# ----------------------------------------------------------------------------
-# Ce dépôt est privé : le clone exige l'agent SSH forwardé. Sans agent,
-# l'avertissement est explicite et la tentative sera refaite au prochain
-# démarrage (jamais de dossier à moitié cloné : clone dans un tmp puis mv).
-if [[ -n "$NVIM_REPO" ]]; then
-  if [[ "$NVIM_REPO" == git@* && "$AGENT_OK" -eq 0 ]]; then
-    warn "Agent SSH indisponible → config NeoVim non clonée (nvim restera nu)."
-  elif [[ -d "${NVIM_DIR}/.git" ]]; then
-    log "Mise à jour de la config NeoVim (${NVIM_DIR})…"
-    git -C "${NVIM_DIR}" pull --ff-only || warn "git pull nvim a échoué — config conservée"
-  elif [[ -e "${NVIM_DIR}" ]]; then
-    warn "${NVIM_DIR} existe mais n'est pas un dépôt git — laissé intact."
-  else
-    log "Clonage de la config NeoVim depuis ${NVIM_REPO}…"
-    nvim_tmp="${HOME}/.config/.nvim.clone.$$"
-    rm -rf "$nvim_tmp"
-    if git clone "$NVIM_REPO" "$nvim_tmp"; then
-      mv "$nvim_tmp" "$NVIM_DIR"
-      log "Config LazyVim installée"
-    else
-      rm -rf "$nvim_tmp"
-      warn "Le clone de la config NeoVim a échoué — nvim restera nu ce démarrage."
-    fi
-  fi
-fi
-
-# ----------------------------------------------------------------------------
-# 6. Symlinks de configuration
-# ----------------------------------------------------------------------------
-mkdir -p "${HOME}/.config"
-
-# Zsh : layout dotfiles/zsh/.zshrc, avec repli sur .zshrc à la racine du repo
-for src in "${DOTFILES_DIR}/zsh/.zshrc" "${DOTFILES_DIR}/.zshrc"; do
-  [[ -f "$src" ]] || continue
-  ln -sf "$src" "${HOME}/.zshrc"
-  log "Config Zsh liée"
-  break
-done
-
-# Tmux : layout dotfiles/tmux/.tmux.conf, avec repli sur .tmux.conf à la racine
-for src in "${DOTFILES_DIR}/tmux/.tmux.conf" "${DOTFILES_DIR}/.tmux.conf"; do
-  [[ -f "$src" ]] || continue
-  ln -sf "$src" "${HOME}/.tmux.conf"
-  log "Config Tmux liée"
-  break
-done
-
-# NeoVim : le dépôt dédié (étape 4) est prioritaire ; le symlink dotfiles/nvim
-# ne s'applique que si ~/.config/nvim est encore libre.
-if [[ -d "${DOTFILES_DIR}/nvim" ]]; then
-  if [[ -e "${NVIM_DIR}" ]]; then
-    warn "${NVIM_DIR} déjà fourni (dépôt dédié) — symlink dotfiles/nvim ignoré."
-  else
-    ln -sfn "${DOTFILES_DIR}/nvim" "${NVIM_DIR}"
-    log "Config LazyVim liée (dotfiles)"
-  fi
-fi
-
-# LazyGit : layout dotfiles/lazygit/config.yml (éditeur nvim par défaut)
-if [[ -f "${DOTFILES_DIR}/lazygit/config.yml" ]]; then
-  mkdir -p "${HOME}/.config/lazygit"
-  ln -sf "${DOTFILES_DIR}/lazygit/config.yml" "${HOME}/.config/lazygit/config.yml"
-  log "Config LazyGit liée"
-fi
-
-# Git : nvim comme éditeur des messages de commit (si non déjà défini)
 if [[ "$(git config --global core.editor || true)" != "nvim" ]]; then
-  git config --global core.editor nvim
-  log "git core.editor = nvim"
+  if git config --global core.editor nvim 2>/dev/null; then
+    log "git core.editor = nvim"
+  else
+    warn "Could not write git core.editor (read-only git config?)."
+  fi
 fi
 
-# SSH : config + clés publiques uniquement (jamais de clé privée)
-if [[ -d "${DOTFILES_DIR}/ssh" ]]; then
-  mkdir -p "${HOME}/.ssh"
-  chmod 700 "${HOME}/.ssh"
-  cp -r "${DOTFILES_DIR}/ssh/"* "${HOME}/.ssh/" 2>/dev/null || true
-  find "${HOME}/.ssh" -name "*private*" -not -name "*.pub" -delete 2>/dev/null || true
-  chmod 644 "${HOME}/.ssh/"*.pub 2>/dev/null || true
-  chmod 600 "${HOME}/.ssh/config" 2>/dev/null || true
-  log "Config SSH installée (sans clé privée)"
-fi
-
-# Zsh comme shell par défaut
+# ----------------------------------------------------------------------------
+# 5. Zsh as the default shell
+# ----------------------------------------------------------------------------
 if command -v zsh >/dev/null 2>&1; then
   if [[ "$SHELL" != "$(which zsh)" ]]; then
     sudo chsh -s "$(which zsh)" "$(whoami)" 2>/dev/null || true
@@ -220,9 +119,9 @@ if command -v zsh >/dev/null 2>&1; then
 fi
 
 # ----------------------------------------------------------------------------
-# 7. Session
+# 6. Session
 # ----------------------------------------------------------------------------
-log "Environnement prêt. zsh · tmux · nvim (LazyVim) · lazygit · opencode · rg/fd/fzf"
+log "Environment ready (baked configs): zsh · tmux · nvim (LazyVim) · lazygit · opencode · rg/fd/fzf"
 
 if [[ "$NO_SHELL" -eq 1 ]]; then
   exit 0
@@ -233,7 +132,7 @@ if [[ $# -gt 0 ]]; then
 elif [[ -t 0 ]]; then
   exec zsh -l
 else
-  # Pas de TTY (ex: docker run sans -it) : shell via docker exec à la demande.
-  log "Astuce : entrez dans le conteneur avec : docker exec -it <conteneur> zsh"
+  # No TTY (e.g. docker run without -it): enter via docker exec on demand.
+  log "Tip: enter the container with: docker exec -it <container> zsh"
   while :; do sleep 3600; done
 fi
