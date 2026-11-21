@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/jesseduffield/lazygit/master/schema/config.json
+
+# Global lazygit config for devbox. Baked into the image (see Dockerfile) and
+# linked into $HOME/.config/lazygit/config.yml. Repo-specific overrides are
+# still possible via .git/lazygit.yml or .lazygit.yml in a project.
+os:
+  # nvim-remote covers both contexts:
+  #   - plain terminal ($NVIM unset): nvim runs in the terminal, lazygit
+  #     resumes after :q
+  #   - Neovim :terminal / floating terminal ($NVIM set): the file opens in
+  #     the parent Neovim instance (--server "$NVIM" --remote-tab)
+  editPreset: nvim-remote

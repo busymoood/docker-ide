@@ -9,7 +9,7 @@
 #   5. Zsh as the default shell
 #   6. Start the session (zsh) when an interactive shell is requested
 #
-# NB: configs (zsh, tmux, NeoVim/LazyVim) are now baked into the image
+# NB: configs (zsh, tmux, NeoVim/LazyVim, lazygit) are baked into the image
 # (/opt/devbox-config + symlinks in $HOME). No network clone at startup, even
 # without an SSH agent. The SSH relay is still useful for git on the workspace.
 #
@@ -97,7 +97,9 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 4. Git: nvim as the commit message editor (unless already set).
+# 4. Git: nvim as the commit message editor (unless already set). lazygit's
+# `C`/`R` commands go through this setting; file editing (`e`) uses lazygit's
+# own config (os.editPreset: nvim-remote).
 # Tolerant: ~/.gitconfig may be a single-file bind mount where git cannot
 # replace the file (no rename) — must not interrupt onstart.
 # ----------------------------------------------------------------------------
@@ -121,7 +123,7 @@ fi
 # ----------------------------------------------------------------------------
 # 6. Session
 # ----------------------------------------------------------------------------
-log "Environment ready (baked configs): zsh · tmux · nvim (LazyVim) · lazygit · opencode · rg/fd/fzf"
+log "Environment ready (baked configs): zsh · tmux · nvim (LazyVim) · lazygit (nvim editor) · opencode · rg/fd/fzf"
 
 if [[ "$NO_SHELL" -eq 1 ]]; then
   exit 0

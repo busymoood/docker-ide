@@ -83,12 +83,14 @@ RUN set -eux; \
     chown -R dev:dev /home/dev/.tmux
 
 # --- User configs baked into the image --------------------------------------
-# The content is versioned in this repository (zshrc/, neovim/): no network
-# clone at container startup. /opt/devbox-config stays in the image layer and
-# is not overwritten by the ~/.local volume; the symlinks live in $HOME.
-COPY zshrc/zshrc      /opt/devbox-config/zshrc
-COPY zshrc/tmux.conf  /opt/devbox-config/tmux.conf
-COPY neovim/          /opt/devbox-config/nvim/
+# The content is versioned in this repository (zshrc/, neovim/, lazygit/): no
+# network clone at container startup. /opt/devbox-config stays in the image
+# layer and is not overwritten by the ~/.local volume; the symlinks live in
+# $HOME.
+COPY zshrc/zshrc        /opt/devbox-config/zshrc
+COPY zshrc/tmux.conf    /opt/devbox-config/tmux.conf
+COPY neovim/            /opt/devbox-config/nvim/
+COPY lazygit/           /opt/devbox-config/lazygit/
 
 RUN set -eux; \
     # These files are also used on macOS: patch the IMAGE COPY, not the source.
@@ -98,6 +100,8 @@ RUN set -eux; \
     ln -sf /opt/devbox-config/tmux.conf /home/dev/.tmux.conf; \
     mkdir -p /home/dev/.config; \
     ln -sfn /opt/devbox-config/nvim      /home/dev/.config/nvim; \
+    mkdir -p /home/dev/.config/lazygit; \
+    ln -sf /opt/devbox-config/lazygit/config.yml /home/dev/.config/lazygit/config.yml; \
     chown -R dev:dev /opt/devbox-config
 
 # --- NeoVim (latest stable, official multi-arch binary) ---------------------

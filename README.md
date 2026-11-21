@@ -4,7 +4,7 @@ My personal IDE, a docker image that I can deploy everywhere and contains everyt
 
 An all-in-one Docker image (**NeoVim + LazyVim**, **tmux**, **zsh**, **LazyGit**, **ripgrep**, **fd**, **fzf**, **OpenCode**…), built for **amd64 + arm64** and published automatically to **GHCR** by CI.
 
-Personal configs (**zsh**, **tmux**, **NeoVim/LazyVim**) are **baked into the image**: no network clone at startup, even without an SSH agent. They are versioned here in `zshrc/` and `neovim/`, copied into `/opt/devbox-config` and linked into `$HOME`. No private key is ever stored in the image.
+Personal configs (**zsh**, **tmux**, **NeoVim/LazyVim**, **lazygit**) are **baked into the image**: no network clone at startup, even without an SSH agent. They are versioned here in `zshrc/`, `neovim/` and `lazygit/`, copied into `/opt/devbox-config` and linked into `$HOME`. No private key is ever stored in the image.
 
 ## Quickstart
 
@@ -135,4 +135,6 @@ Then enter the recreated container: `docker exec -it <container-name> zsh`.
 
 On a `docker run` host (VPS / Raspberry Pi), the equivalent is `docker pull` + `docker rm -f devbox` + the same `docker run` command — see [Update on a `docker run` host](#4-update-on-a-docker-run-host). In both cases the state volume is preserved; only the image layers change.
 
-To change a config: edit `zshrc/` or `neovim/` in this repository and push to `main` — CI rebuilds and republishes the image. On each machine, pull the image then **Rebuild Container**. LazyVim plugins, on the other hand, are installed at runtime into the `devbox-home` volume and stay up to date independently.
+To change a config: edit `zshrc/`, `neovim/` or `lazygit/` in this repository and push to `main` — CI rebuilds and republishes the image. On each machine, pull the image then **Rebuild Container**. LazyVim plugins, on the other hand, are installed at runtime into the `devbox-home` volume and stay up to date independently.
+
+`lazygit/config.yml` sets `os.editPreset: nvim-remote`: `e` opens files in nvim (in the same terminal, or in the parent Neovim instance when `$NVIM` is set). Commit messages use git's `core.editor = nvim`, configured by `onstart`.
