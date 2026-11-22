@@ -39,6 +39,8 @@ downloaded at container startup.
 | `devbox-agent-relay` | Recreates the host SSH agent socket from a TCP relay |
 | `devcontainer.json` | Sample devcontainer definition used in this repository |
 | `.github/workflows/ci.yml` | Buildx + publish to GHCR (amd64 + arm64) on push to `main` only (tags `main` + `latest`); other branches are published only via manual `workflow_dispatch` (tag = branch name) |
+| `.opencode/AGENTS.md` | Project instructions (loaded explicitly via `.opencode/opencode.jsonc`) |
+| `.opencode/devbox-install-agents.md` | Runbook to copy into other repositories' `.opencode/` for agent-driven devcontainer setup |
 
 The `devbox-docker` volume (registry credentials) and the `/var/run/docker.sock`
 bind mount are declared in `devcontainer.json` and in the `docker run` snippets
