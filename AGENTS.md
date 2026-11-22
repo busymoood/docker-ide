@@ -57,8 +57,9 @@ symlinks in `$HOME`:
 | `/opt/devbox-config/lazygit/config.yml` | `~/.config/lazygit/config.yml` |
 
 `/opt/devbox-config` stays in an image layer and is never overwritten by the
-`~/.local` volume. The zsh copy is patched at build time (SSH socket line,
-Oh My Zsh update checks) so the source files in `zshrc/` remain usable on macOS.
+`~/.local` volume. The zsh copy is baked as-is; host-only settings are guarded
+by `DEVBOX_CONTAINER=1` (set in the image), so the source files in `zshrc/`
+remain usable on macOS.
 
 `~/.docker` is deliberately **not** a config symlink: it is the `devbox-docker`
 volume holding `config.json` from `docker login`. The compose/buildx plugins are
