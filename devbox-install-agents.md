@@ -52,7 +52,7 @@ Create the file **exactly** as follows (everything is relative to the project re
 // .devcontainer/devcontainer.json
 {
   "name": "devbox",
-  "image": "ghcr.io/busymoood/dotfiles-docker:v0.6.0",
+  "image": "ghcr.io/busymoood/dotfiles-docker:main",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "containerEnv": {
@@ -78,13 +78,14 @@ Points to watch for the agent:
 - **NeoVim config**: already in the image (`/opt/devbox-config/nvim` → `~/.config/nvim`). Do not hand-write config inside the container: edit `neovim/` in the image repository and rebuild the image. Plugins, on the other hand, are installed on first launch into the `devbox-home` volume.
 - **SSH agent**: `devbox-agent-relay start` (image helper) handles both direct mounts **and** TCP relays, logs to `~/.cache/devbox-agent-relay.log` and arms a retry (30 s × 10 min) if Bitwarden is locked. `devbox-agent-relay doctor` gives the full state.
 - **Project overhead**: anything the project adds (Node, Python, Chromium…) must live in an idempotent script called by `postCreateCommand` (provisioning) and `postStartCommand` (relay + `onstart`), **not** duplicated between `devcontainer.json` and `docker-compose.yml`.
-- **Pinnable tag**: `:latest` or a published version (`:v0.6.0`, `:0.6.0`) — **never write a tag that does not exist** (published tags: `latest`, `main`, `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X`, `sha-<commit>`).
+- **Tag naming**: published tags are `latest`, `main` (default branch) and the branch name with `/` replaced by `-` (e.g. `dev/jfi` → `dev-jfi`). There are no version or SHA tags. To pin an exact build, use the digest (`@sha256:...`) — **never write a tag that does not exist**.
 - **`devcontainer up` on an existing container does not replay `postStartCommand`**: for a full cycle, use `--remove-existing-container` (volume preserved) or run `devbox-agent-relay start; onstart --no-shell` manually.
 - If `SSH_AUTH_SOCK` does not exist on the host **and** Docker is native, the `mounts` entry will fail: remove it, warn the user, and let `devbox-agent-relay` report the missing agent.
 
 > **`:latest` trap**: the CLI reuses the image if the tag exists locally, even if outdated
-> (symptom: stale configs or missing binaries). Either pin a version (`:v0.6.0`),
-> or run `docker pull ghcr.io/busymoood/dotfiles-docker:latest` before `up`.
+> (symptom: stale configs or missing binaries). Run
+> `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (or `:main`) before `up`,
+> or pin the exact digest.
 
 ---
 
@@ -152,7 +153,7 @@ Leave the session with `docker exec -it <container> zsh -l` (zsh is the default 
   devcontainer up --workspace-folder .
   docker exec -it <container> zsh
   ```
-- Update reminder: `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (or pinned `:v0.6.0`). Configs are in the image: to change them, edit `zshrc/` or `neovim/` in the image repository, push to `main` (CI rebuilds), then pull the image and **Rebuild Container** on each machine.
+- Update reminder: `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (or a pinned digest). Configs are in the image: to change them, edit `zshrc/` or `neovim/` in the image repository, push to `main` (CI rebuilds), then pull the image and **Rebuild Container** on each machine.
 
 ---
 

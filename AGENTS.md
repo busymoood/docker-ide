@@ -38,7 +38,7 @@ downloaded at container startup.
 | `onstart.sh` | Image entrypoint / bootstrap, also usable as `onstart --no-shell` |
 | `devbox-agent-relay` | Recreates the host SSH agent socket from a TCP relay |
 | `devcontainer.json` | Sample devcontainer definition used in this repository |
-| `.github/workflows/ci.yml` | Buildx + publish to GHCR (amd64 + arm64) on push to `main` / tags |
+| `.github/workflows/ci.yml` | Buildx + publish to GHCR (amd64 + arm64) on push to `main` only (tags `main` + `latest`); other branches are published only via manual `workflow_dispatch` (tag = branch name) |
 
 The `devbox-docker` volume (registry credentials) and the `/var/run/docker.sock`
 bind mount are declared in `devcontainer.json` and in the `docker run` snippets
