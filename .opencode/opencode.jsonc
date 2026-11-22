@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // AGENTS.md is no longer at the project root: declare it explicitly so
+  // OpenCode still loads it as project instructions.
+  "instructions": [
+    ".opencode/AGENTS.md"
+  ]
+}

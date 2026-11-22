@@ -1,6 +1,6 @@
 # Files not needed for the image build
 README.md
-AGENTS.md
+.opencode/
 LICENSE
 .github/
 bin/

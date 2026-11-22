@@ -14,6 +14,9 @@ ENV EDITOR=nvim VISUAL=nvim
 # talks to the host daemon through the bind-mounted /var/run/docker.sock.
 ENV DOCKER_HOST=unix:///var/run/docker.sock
 
+# Marker used by the baked zshrc to distinguish the image from the macOS host.
+ENV DEVBOX_CONTAINER=1
+
 USER root
 
 # --- "dev" user --------------------------------------------------------------
@@ -117,10 +120,9 @@ COPY zshrc/tmux.conf    /opt/devbox-config/tmux.conf
 COPY neovim/            /opt/devbox-config/nvim/
 COPY lazygit/           /opt/devbox-config/lazygit/
 
+# Configs are baked as-is: host-vs-image differences are guarded in zshrc by
+# $DEVBOX_CONTAINER, so no build-time patching of the source is needed.
 RUN set -eux; \
-    # These files are also used on macOS: patch the IMAGE COPY, not the source.
-    sed -i 's|^export SSH_AUTH_SOCK=.*|# SSH_AUTH_SOCK provided by devbox (agent relay) - do not override|' /opt/devbox-config/zshrc; \
-    sed -i 's|^source .*oh-my-zsh.sh|zstyle ":omz:update" mode disabled\n&|' /opt/devbox-config/zshrc; \
     ln -sf /opt/devbox-config/zshrc     /home/dev/.zshrc; \
     ln -sf /opt/devbox-config/tmux.conf /home/dev/.tmux.conf; \
     mkdir -p /home/dev/.config; \

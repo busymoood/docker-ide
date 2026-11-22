@@ -1,6 +1,16 @@
+<div align="center">
+
+<img src="assets/img/logo.png" width="250" alt="logo">
+
+<br/>
+<br/>
+<br/>
+
 # my personal IDE
 
-My personal IDE, a docker image that I can deploy everywhere and contains everything and need and nothing I don't.
+</div>
+
+A docker image that I can deploy everywhere and contains everything and need and nothing I don't.
 
 An all-in-one Docker image (**NeoVim + LazyVim**, **tmux**, **zsh**, **LazyGit**, **ripgrep**, **fd**, **fzf**, **OpenCode**, **Docker CLI + compose/buildx**…), built for **amd64 + arm64** and published automatically to **GHCR** by CI.
 

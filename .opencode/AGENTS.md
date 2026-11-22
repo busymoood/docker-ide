@@ -38,7 +38,9 @@ downloaded at container startup.
 | `onstart.sh` | Image entrypoint / bootstrap, also usable as `onstart --no-shell` |
 | `devbox-agent-relay` | Recreates the host SSH agent socket from a TCP relay |
 | `devcontainer.json` | Sample devcontainer definition used in this repository |
-| `.github/workflows/ci.yml` | Buildx + publish to GHCR (amd64 + arm64) on push to `main` / tags |
+| `.github/workflows/ci.yml` | Buildx + publish to GHCR (amd64 + arm64) on push to `main` only (tags `main` + `latest`); other branches are published only via manual `workflow_dispatch` (tag = branch name) |
+| `.opencode/AGENTS.md` | Project instructions (loaded explicitly via `.opencode/opencode.jsonc`) |
+| `.opencode/devbox-install-agents.md` | Runbook to copy into other repositories' `.opencode/` for agent-driven devcontainer setup |
 
 The `devbox-docker` volume (registry credentials) and the `/var/run/docker.sock`
 bind mount are declared in `devcontainer.json` and in the `docker run` snippets
@@ -57,8 +59,9 @@ symlinks in `$HOME`:
 | `/opt/devbox-config/lazygit/config.yml` | `~/.config/lazygit/config.yml` |
 
 `/opt/devbox-config` stays in an image layer and is never overwritten by the
-`~/.local` volume. The zsh copy is patched at build time (SSH socket line,
-Oh My Zsh update checks) so the source files in `zshrc/` remain usable on macOS.
+`~/.local` volume. The zsh copy is baked as-is; host-only settings are guarded
+by `DEVBOX_CONTAINER=1` (set in the image), so the source files in `zshrc/`
+remain usable on macOS.
 
 `~/.docker` is deliberately **not** a config symlink: it is the `devbox-docker`
 volume holding `config.json` from `docker login`. The compose/buildx plugins are

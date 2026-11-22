@@ -1,12 +1,22 @@
 # devbox — Instructions for an agent: wire up the image instead of configuring by hand
 
 Instruction file aimed at a **coding agent** (OpenCode, Copilot CLI, Claude Code…).
-Copy it to the root of the project repository (e.g. `devbox-install-agents.md`) and
-reference it from the project's `AGENTS.md`:
+Copy it into the project repository's `.opencode/` directory
+(e.g. `.opencode/devbox-install-agents.md`) and reference it from the project's
+instructions:
 
 ```markdown
 ## Dev environment
-Use the devbox container: follow devbox-install-agents.md (do not configure the environment by hand).
+Use the devbox container: follow .opencode/devbox-install-agents.md (do not configure the environment by hand).
+```
+
+With OpenCode, you can also have it loaded automatically alongside `AGENTS.md`
+by declaring it in `.opencode/opencode.jsonc`:
+
+```jsonc
+{
+  "instructions": [".opencode/AGENTS.md", ".opencode/devbox-install-agents.md"]
+}
 ```
 
 > Image source of truth: [`busymoood/dotfiles-docker`](https://github.com/busymoood/dotfiles-docker) repository (full README: SSH chains, Raspberry, VPS, WSL2).
@@ -52,7 +62,7 @@ Create the file **exactly** as follows (everything is relative to the project re
 // .devcontainer/devcontainer.json
 {
   "name": "devbox",
-  "image": "ghcr.io/busymoood/dotfiles-docker:v0.6.0",
+  "image": "ghcr.io/busymoood/dotfiles-docker:main",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "containerEnv": {
@@ -78,13 +88,14 @@ Points to watch for the agent:
 - **NeoVim config**: already in the image (`/opt/devbox-config/nvim` → `~/.config/nvim`). Do not hand-write config inside the container: edit `neovim/` in the image repository and rebuild the image. Plugins, on the other hand, are installed on first launch into the `devbox-home` volume.
 - **SSH agent**: `devbox-agent-relay start` (image helper) handles both direct mounts **and** TCP relays, logs to `~/.cache/devbox-agent-relay.log` and arms a retry (30 s × 10 min) if Bitwarden is locked. `devbox-agent-relay doctor` gives the full state.
 - **Project overhead**: anything the project adds (Node, Python, Chromium…) must live in an idempotent script called by `postCreateCommand` (provisioning) and `postStartCommand` (relay + `onstart`), **not** duplicated between `devcontainer.json` and `docker-compose.yml`.
-- **Pinnable tag**: `:latest` or a published version (`:v0.6.0`, `:0.6.0`) — **never write a tag that does not exist** (published tags: `latest`, `main`, `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X`, `sha-<commit>`).
+- **Tag naming**: CI runs automatically only on `main` (tags `main` + `latest`). Other branches are published only when the workflow is **manually dispatched** (`gh workflow run ci.yml --ref dev/jfi`), with the branch name as tag (`/` → `-`, e.g. `dev/jfi` → `dev-jfi`). There are no version or SHA tags. To pin an exact build, use the digest (`@sha256:...`) — **never write a tag that does not exist**.
 - **`devcontainer up` on an existing container does not replay `postStartCommand`**: for a full cycle, use `--remove-existing-container` (volume preserved) or run `devbox-agent-relay start; onstart --no-shell` manually.
 - If `SSH_AUTH_SOCK` does not exist on the host **and** Docker is native, the `mounts` entry will fail: remove it, warn the user, and let `devbox-agent-relay` report the missing agent.
 
 > **`:latest` trap**: the CLI reuses the image if the tag exists locally, even if outdated
-> (symptom: stale configs or missing binaries). Either pin a version (`:v0.6.0`),
-> or run `docker pull ghcr.io/busymoood/dotfiles-docker:latest` before `up`.
+> (symptom: stale configs or missing binaries). Run
+> `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (or `:main`) before `up`,
+> or pin the exact digest.
 
 ---
 
@@ -152,7 +163,7 @@ Leave the session with `docker exec -it <container> zsh -l` (zsh is the default 
   devcontainer up --workspace-folder .
   docker exec -it <container> zsh
   ```
-- Update reminder: `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (or pinned `:v0.6.0`). Configs are in the image: to change them, edit `zshrc/` or `neovim/` in the image repository, push to `main` (CI rebuilds), then pull the image and **Rebuild Container** on each machine.
+- Update reminder: `docker pull ghcr.io/busymoood/dotfiles-docker:latest` (or a pinned digest). Configs are in the image: to change them, edit `zshrc/` or `neovim/` in the image repository, push to `main` (CI rebuilds), then pull the image and **Rebuild Container** on each machine.
 
 ---
 
