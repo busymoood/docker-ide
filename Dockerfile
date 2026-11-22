@@ -10,6 +10,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Default editor: nvim (used by lazygit, git, opencode…)
 ENV EDITOR=nvim VISUAL=nvim
 
+# Docker CLI (Docker-outside-of-Docker): no daemon in the container, the CLI
+# talks to the host daemon through the bind-mounted /var/run/docker.sock.
+ENV DOCKER_HOST=unix:///var/run/docker.sock
+
 USER root
 
 # --- "dev" user --------------------------------------------------------------
@@ -45,6 +49,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
   && rm -rf /var/lib/apt/lists/* \
   && ln -sf /usr/bin/fdfind /usr/local/bin/fd
+
+# --- Docker CLI (Docker-outside-of-Docker) -----------------------------------
+# CLI + compose/buildx plugins only: no dockerd runs in the container. The CLI
+# reaches the host daemon through the bind-mounted /var/run/docker.sock.
+# Official Docker apt repo, multi-arch via dpkg --print-architecture.
+RUN set -eux; \
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true; \
+    install -m 0755 -d /etc/apt/keyrings; \
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+      https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc; \
+    chmod a+r /etc/apt/keyrings/docker.asc; \
+    . /etc/os-release; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+      > /etc/apt/sources.list.d/docker.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      docker-ce-cli docker-compose-plugin docker-buildx-plugin; \
+    rm -rf /var/lib/apt/lists/*; \
+    docker --version; \
+    docker compose version; \
+    docker buildx version
 
 # --- Oh My Zsh plugins -------------------------------------------------------
 # The base image already ships Oh My Zsh in ~/.oh-my-zsh; the baked zshrc

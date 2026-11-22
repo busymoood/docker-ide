@@ -5,9 +5,10 @@
 #   1. State volume (~/.local): permissions + tool state outside the image
 #   2. SSH station: make sure github.com is known
 #   3. Check the forwarded SSH agent (wait for a relay started in parallel)
-#   4. git core.editor = nvim
-#   5. Zsh as the default shell
-#   6. Start the session (zsh) when an interactive shell is requested
+#   4. Docker CLI: align the host socket's GID so `dev` can reach it
+#   5. git core.editor = nvim
+#   6. Zsh as the default shell
+#   7. Start the session (zsh) when an interactive shell is requested
 #
 # NB: configs (zsh, tmux, NeoVim/LazyVim, lazygit) are baked into the image
 # (/opt/devbox-config + symlinks in $HOME). No network clone at startup, even
@@ -42,6 +43,16 @@ if [[ ! -w "$LOCAL_DIR" ]]; then
   log "Volume ${LOCAL_DIR} is not writable — fixing permissions…"
   sudo chown -R "$(id -u):$(id -g)" "$LOCAL_DIR" 2>/dev/null \
     || warn "Could not make ${LOCAL_DIR} writable — nvim plugins unavailable."
+fi
+
+# Same issue for the Docker credentials volume (~/.docker), also created
+# root:root by Docker when it does not exist in the image.
+DOCKER_CONFIG_DIR="${HOME}/.docker"
+[[ -e "$DOCKER_CONFIG_DIR" ]] || mkdir -p "$DOCKER_CONFIG_DIR"
+if [[ -d "$DOCKER_CONFIG_DIR" && ! -w "$DOCKER_CONFIG_DIR" ]]; then
+  log "Volume ${DOCKER_CONFIG_DIR} is not writable — fixing permissions…"
+  sudo chown -R "$(id -u):$(id -g)" "$DOCKER_CONFIG_DIR" 2>/dev/null \
+    || warn "Could not make ${DOCKER_CONFIG_DIR} writable — docker login will fail."
 fi
 
 # Some tools write to $HOME, outside the volume (and thus lost on container
@@ -97,7 +108,44 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 4. Git: nvim as the commit message editor (unless already set). lazygit's
+# 4. Docker CLI (Docker-outside-of-Docker): the socket is bind-mounted from the
+#    host and belongs to the host's `docker` group, whose GID rarely matches the
+#    container's. Mirror that GID into /etc/group and add `dev` so no sudo is
+#    needed inside the devbox. Tolerant: the socket is optional, bootstrap must
+#    never fail when it is absent.
+# ----------------------------------------------------------------------------
+DOCKER_SOCKET="/var/run/docker.sock"
+if [[ "${DOCKER_HOST:-}" == unix://* ]]; then
+  DOCKER_SOCKET="${DOCKER_HOST#unix://}"
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  if [[ -S "$DOCKER_SOCKET" ]]; then
+    SOCK_GID="$(stat -c '%g' "$DOCKER_SOCKET" 2>/dev/null || true)"
+    if [[ -n "$SOCK_GID" ]]; then
+      DOCKER_GROUP="$(getent group "$SOCK_GID" | cut -d: -f1 || true)"
+      if [[ -z "$DOCKER_GROUP" ]]; then
+        DOCKER_GROUP="docker-host"
+        sudo groupadd -g "$SOCK_GID" "$DOCKER_GROUP" 2>/dev/null \
+          || warn "Could not create a group for Docker socket GID ${SOCK_GID}."
+      fi
+      if ! id -nG "$(id -un)" | tr ' ' '\n' | grep -qx "$DOCKER_GROUP" 2>/dev/null; then
+        sudo usermod -aG "$DOCKER_GROUP" "$(id -un)" 2>/dev/null \
+          || warn "Could not add $(id -un) to ${DOCKER_GROUP} — docker commands may fail."
+      fi
+      if docker info >/dev/null 2>&1; then
+        log "Docker CLI OK (host daemon via ${DOCKER_SOCKET})"
+      else
+        warn "Docker socket present but daemon unreachable via ${DOCKER_SOCKET}."
+      fi
+    fi
+  else
+    warn "Docker socket ${DOCKER_SOCKET} not mounted — add -v /var/run/docker.sock:/var/run/docker.sock."
+  fi
+fi
+
+# ----------------------------------------------------------------------------
+# 5. Git: nvim as the commit message editor (unless already set). lazygit's
 # `C`/`R` commands go through this setting; file editing (`e`) uses lazygit's
 # own config (os.editPreset: nvim-remote).
 # Tolerant: ~/.gitconfig may be a single-file bind mount where git cannot
@@ -112,7 +160,7 @@ if [[ "$(git config --global core.editor || true)" != "nvim" ]]; then
 fi
 
 # ----------------------------------------------------------------------------
-# 5. Zsh as the default shell
+# 6. Zsh as the default shell
 # ----------------------------------------------------------------------------
 if command -v zsh >/dev/null 2>&1; then
   if [[ "$SHELL" != "$(which zsh)" ]]; then
@@ -121,9 +169,9 @@ if command -v zsh >/dev/null 2>&1; then
 fi
 
 # ----------------------------------------------------------------------------
-# 6. Session
+# 7. Session
 # ----------------------------------------------------------------------------
-log "Environment ready (baked configs): zsh · tmux · nvim (LazyVim) · lazygit (nvim editor) · opencode · rg/fd/fzf"
+log "Environment ready (baked configs): zsh · tmux · nvim (LazyVim) · lazygit (nvim editor) · opencode · rg/fd/fzf · docker cli"
 
 if [[ "$NO_SHELL" -eq 1 ]]; then
   exit 0

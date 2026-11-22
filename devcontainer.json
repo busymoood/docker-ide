@@ -7,7 +7,9 @@
     "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock"
   },
   "mounts": [
-    "source=devbox-home,target=/home/dev/.local,type=volume"
+    "source=devbox-home,target=/home/dev/.local,type=volume",
+    "source=devbox-docker,target=/home/dev/.docker,type=volume",
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
   ],
   "postStartCommand": "devbox-agent-relay start; onstart --no-shell"
 }

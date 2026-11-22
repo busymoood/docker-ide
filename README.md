@@ -2,9 +2,9 @@
 
 My personal IDE, a docker image that I can deploy everywhere and contains everything and need and nothing I don't.
 
-An all-in-one Docker image (**NeoVim + LazyVim**, **tmux**, **zsh**, **LazyGit**, **ripgrep**, **fd**, **fzf**, **OpenCode**…), built for **amd64 + arm64** and published automatically to **GHCR** by CI.
+An all-in-one Docker image (**NeoVim + LazyVim**, **tmux**, **zsh**, **LazyGit**, **ripgrep**, **fd**, **fzf**, **OpenCode**, **Docker CLI + compose/buildx**…), built for **amd64 + arm64** and published automatically to **GHCR** by CI.
 
-Personal configs (**zsh**, **tmux**, **NeoVim/LazyVim**, **lazygit**) are **baked into the image**: no network clone at startup, even without an SSH agent. They are versioned here in `zshrc/`, `neovim/` and `lazygit/`, copied into `/opt/devbox-config` and linked into `$HOME`. No private key is ever stored in the image.
+Personal configs (**zsh**, **tmux**, **NeoVim/LazyVim**, **lazygit**) are **baked into the image**: no network clone at startup, even without an SSH agent. They are versioned here in `zshrc/`, `neovim/` and `lazygit/`, copied into `/opt/devbox-config` and linked into `$HOME`. No private key is ever stored in the image; Docker registry credentials live in a dedicated volume.
 
 ## Quickstart
 
@@ -23,7 +23,9 @@ At the root of the project repository:
     "SSH_AUTH_SOCK": "${localEnv:DEVBOX_SSH_AUTH_SOCK:/tmp/ssh-agent.sock}"
   },
   "mounts": [
-    "source=devbox-home,target=/home/dev/.local,type=volume" // tool state, kept between sessions
+    "source=devbox-home,target=/home/dev/.local,type=volume", // tool state, kept between sessions
+    "source=devbox-docker,target=/home/dev/.docker,type=volume", // docker login credentials
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind" // host daemon
   ],
   // SSH agent then local bootstrap (no clone)
   "postStartCommand": "devbox-agent-relay start; onstart --no-shell"
@@ -38,7 +40,7 @@ devcontainer up --workspace-folder .
 docker exec -it <container-name> zsh                    # enter the container
 ```
 
-`onstart` (the image entrypoint) prepares the state volume, checks the SSH agent and sets the git editor. Configs are already present in the image.
+`onstart` (the image entrypoint) prepares the state volume, checks the SSH agent, aligns the Docker socket GID and sets the git editor. Configs are already present in the image.
 
 ## VPS / Raspberry Pi
 
@@ -82,6 +84,8 @@ mkdir -p /opt/devbox/workspaces
 
 docker run -d --name devbox \
   -v devbox-local:/home/dev/.local \
+  -v devbox-docker:/home/dev/.docker \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -v /opt/devbox/workspaces:/workspace \
   -v <your-projects-home>:/host-home \
   -v "$SSH_AUTH_SOCK:/ssh-agent" \
@@ -98,6 +102,8 @@ docker exec -it devbox zsh
 | `/workspace` | `/opt/devbox/workspaces` | your projects (read/write) |
 | `/host-home` | `<your-projects-home>` | host files |
 | `/home/dev/.local` | `devbox-local` volume | LazyVim/Mason state, kept across recreations |
+| `/home/dev/.docker` | `devbox-docker` volume | `docker login` credentials, kept across recreations |
+| `/var/run/docker.sock` | host Docker socket | Docker CLI controls the host daemon |
 | `/ssh-agent` | `$SSH_AUTH_SOCK` via `ssh -A` | `git push` uses your local agent |
 
 Useful shortcut (created inside the bind mount, so it survives recreations):
@@ -123,7 +129,7 @@ Or simply `docker rm -f devbox` before re-running. Note that `$SSH_AUTH_SOCK` is
 
 ## Updating the image
 
-Binaries **and** configs come from the image. The devcontainers CLI reuses the local image if the tag exists, even if outdated: you must **force a pull** then **recreate** the container. The `devbox-home` volume is preserved.
+Binaries **and** configs come from the image. The devcontainers CLI reuses the local image if the tag exists, even if outdated: you must **force a pull** then **recreate** the container. The state volumes (`devbox-home` / `devbox-local` and `devbox-docker`) are preserved.
 
 ```bash
 # :latest tag — explicit re-pull, otherwise the stale local image is reused
@@ -133,7 +139,7 @@ devcontainer up --workspace-folder . --remove-existing-container
 
 Then enter the recreated container: `docker exec -it <container-name> zsh`.
 
-On a `docker run` host (VPS / Raspberry Pi), the equivalent is `docker pull` + `docker rm -f devbox` + the same `docker run` command — see [Update on a `docker run` host](#4-update-on-a-docker-run-host). In both cases the state volume is preserved; only the image layers change.
+On a `docker run` host (VPS / Raspberry Pi), the equivalent is `docker pull` + `docker rm -f devbox` + the same `docker run` command — see [Update on a `docker run` host](#4-update-on-a-docker-run-host). In both cases the state volumes are preserved; only the image layers change.
 
 To change a config: edit `zshrc/`, `neovim/` or `lazygit/` in this repository and push to `main` — CI rebuilds and republishes the image. On each machine, pull the image then **Rebuild Container**. LazyVim plugins, on the other hand, are installed at runtime into the `devbox-home` volume and stay up to date independently.
 
